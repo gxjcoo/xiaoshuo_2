@@ -160,11 +160,11 @@ def generate_chapter_content(current_context, writing_style, target_length, prev
         f"{current_context_summary}\n\n"
         f"{core_elements}\n\n"
         f"【核心创作要求】：\n"
-        f"1. **风格平衡**：保持原文的诙谐幽默风格，但同时注重剧情深度和主线发展，避免沦为纯搞笑文学。\n"
+        f"1. **风格平衡**：保持原文的诙谐幽默风格，但同时注重主线推进，避免沦为纯搞笑文学。\n"
         f"2. **内容连贯**：严格维持剧情、角色性格和世界设定的连贯性。\n"
         f"3. **主线推进**：每章应当推进主要剧情或角色发展，而不仅仅提供笑点，幽默应服务于情节而非喧宾夺主。\n"
-        f"4. **标题要求**：为第 {chapter_number} 章构思一个既有深意又不失幽默的标题（格式：'第{chapter_number}章 标题内容...'），放在内容最开始。\n"
-        f"5. **字数要求**：生成约 {target_length} 字（含标题）。\n"
+        f"4. **标题要求**：为第 {chapter_number} 章构思一个标题（格式：'第{chapter_number}章 标题内容...'），放在内容最开始。\n"
+        f"5. **字数要求**：生成约 {target_length} 字正文内容。\n"
         f"6. **结构平衡**：保持对话、叙述和内心活动的平衡，不过分倚重单一表达方式。\n\n"
     )
 
@@ -183,14 +183,14 @@ def generate_chapter_content(current_context, writing_style, target_length, prev
             f"   上一章结尾片段：\n   ```\n   {previous_ending}\n   ```\n"
             f"2. **情节推进**：在保持风格和连贯性的前提下，合理推进主线故事发展，而非仅仅堆砌笑点。\n"
             f"3. **核心角色发展**：注重刻画核心角色的动机与成长，而非仅展示其滑稽一面。\n"
-            f"4. **情感深化**：在保持幽默的同时，循序渐进地增加人物情感深度和关系复杂性。\n"
+            f"4. **情感深化**：在保持幽默的同时，循序渐进地增加人物情感和关系复杂性。\n"
         )
     else:  # 生成开篇章节，通常是第一章
         print(f"正在根据语言风格分析生成开篇第 {chapter_number} 章...")
         prompt_instruction = (
             core_requirements +
             f"【开篇特定要求】：\n"
-            f"1. **奠定基调**：通过开篇确立故事既有轻松幽默又有深度的基调。\n"
+            f"1. **奠定基调**：通过开篇确立故事既有轻松幽默的基调。\n"
         )
 
     prompt = prompt_instruction
