@@ -40,15 +40,15 @@ CONTEXT_ANALYSIS_MODEL = "deepseek-chat"
 # AI 请求参数
 # 分析上下文时，为了确保 JSON 完整性，token 限制设大一些
 CONTEXT_ANALYSIS_MAX_TOKENS = 4096 
-CONTEXT_ANALYSIS_TEMPERATURE = 0.2
+CONTEXT_ANALYSIS_TEMPERATURE = 0.1
 
 # 生成章节时，可以有更高的创造性
-CHAPTER_GENERATION_TEMPERATURE = 0.1
+CHAPTER_GENERATION_TEMPERATURE = 0.05
 # 注意：章节生成长度由命令行参数 --length 控制，这里不设置 max_tokens
 
 # 风格分析时的参数
 STYLE_ANALYSIS_MAX_TOKENS = 4096
-STYLE_ANALYSIS_TEMPERATURE = 0.3
+STYLE_ANALYSIS_TEMPERATURE = 0.1
 
 # --- 其他配置 ---
 # 处理章节内容时传递给 AI 的最大字符数，防止输入过长
