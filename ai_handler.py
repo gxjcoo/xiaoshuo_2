@@ -149,17 +149,23 @@ def generate_chapter_content(current_context, writing_style, target_length, prev
     # 构建当前故事背景摘要
     current_context_summary = f"当前故事背景：章节 {current_context.get('last_generated_chapter', 0)}，主角信息：{current_context.get('protagonist_info', {})}, 世界设定：{current_context.get('world_setting', {})}, 近期情节摘要：{current_context.get('recent_plot_summary', '无')}"
 
+    # 获取核心角色和道具
+    core_characters = current_context.get('core_characters', [])
+    core_items = current_context.get('core_items', [])
+    core_elements = f"核心角色：{', '.join(core_characters) if core_characters else '无'}, 核心道具：{', '.join(core_items) if core_items else '无'}"
+
     # --- 核心创作要求 (共同部分) ---
     core_requirements = (
         f"分析出的原文语言风格：\n{writing_style}\n\n"
         f"{current_context_summary}\n\n"
+        f"{core_elements}\n\n"
         f"【核心创作要求】：\n"
-        f"1. **风格模仿**：严格模仿原文独特的诙谐幽默、口语化风格，避免严肃。注重幽默对话和内心独白。\n"
+        f"1. **风格平衡**：保持原文的诙谐幽默风格，但同时注重剧情深度和主线发展，避免沦为纯搞笑文学。\n"
         f"2. **内容连贯**：严格维持剧情、角色性格和世界设定的连贯性。\n"
-        f"3. **结构模仿**：模仿原文的短段落和生动对话结构。\n"
-        f"4. **标题要求**：为第 {chapter_number} 章构思一个模仿原文风格的幽默标题（格式：'第{chapter_number}章 标题内容...'），放在内容最开始。\n"
+        f"3. **主线推进**：每章应当推进主要剧情或角色发展，而不仅仅提供笑点，幽默应服务于情节而非喧宾夺主。\n"
+        f"4. **标题要求**：为第 {chapter_number} 章构思一个既有深意又不失幽默的标题（格式：'第{chapter_number}章 标题内容...'），放在内容最开始。\n"
         f"5. **字数要求**：生成约 {target_length} 字（含标题）。\n"
-        f"6. **角色命名**：不要使用原小说中的角色名称，请根据角色特点和故事背景动态生成合适的角色名称。\n\n"
+        f"6. **结构平衡**：保持对话、叙述和内心活动的平衡，不过分倚重单一表达方式。\n\n"
     )
 
     # 构建提示指令
@@ -175,20 +181,21 @@ def generate_chapter_content(current_context, writing_style, target_length, prev
             f"【续写特定要求】：\n"
             f"1. **直接续写**：新章节必须从上一章的结尾处（如下）无缝衔接，直接延续情节。\n"
             f"   上一章结尾片段：\n   ```\n   {previous_ending}\n   ```\n"
-            f"2. **情节推进**：在保持风格和连贯性的前提下，合理推进故事发展。\n"
+            f"2. **情节推进**：在保持风格和连贯性的前提下，合理推进主线故事发展，而非仅仅堆砌笑点。\n"
+            f"3. **核心角色发展**：注重刻画核心角色的动机与成长，而非仅展示其滑稽一面。\n"
+            f"4. **情感深化**：在保持幽默的同时，循序渐进地增加人物情感深度和关系复杂性。\n"
         )
     else:  # 生成开篇章节，通常是第一章
         print(f"正在根据语言风格分析生成开篇第 {chapter_number} 章...")
         prompt_instruction = (
             core_requirements +
             f"【开篇特定要求】：\n"
-            f"1. **奠定基调**：通过开篇确立故事轻松诙谐的基调。\n"
+            f"1. **奠定基调**：通过开篇确立故事既有轻松幽默又有深度的基调。\n"
         )
 
     prompt = prompt_instruction
     messages = [
-       
-        {"role": "system", "content": "你是一位精通小说创作的幽默作家，特别擅长创作轻松诙谐的故事。你的风格不同于传统严肃的小说，而是注重角色的鲜活对话、内心吐槽和轻松幽默的情节。请根据角色特点和故事背景动态生成合适的角色名称，不要使用原小说中的角色名称。请严格遵循用户的要求进行创作。"}, # 稍微精简和聚焦的system message
+        {"role": "system", "content": "你是一位精通小说创作的作家，擅长创作既有幽默感又有深度的作品。你的风格融合了轻松诙谐与严肃思考，注重角色发展和主线推进，同时保持鲜活对话和适当的幽默元素。请根据角色特点和故事背景动态生成合适的角色名称，确保符合整体世界观。你创作的小说应该既能让读者捧腹，又能引发思考。请严格遵循用户的要求进行创作。"}, 
         {"role": "user", "content": prompt}
     ]
 

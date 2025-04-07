@@ -28,6 +28,8 @@ DEFAULT_CONTEXT = {
         "description": "",
         "key_elements": []
     },
+    "core_characters": [],  # 新增：核心配角列表
+    "core_items": [],       # 新增：核心道具列表
     "recent_plot_summary": ""
 }
 
