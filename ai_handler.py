@@ -177,17 +177,13 @@ def generate_chapter_content(current_context, writing_style, target_length, prev
         prompt_instruction = (
             core_requirements +
             f"【开篇特定要求】：\n"
-            f"1. **开场场景**：请设定在雨天，主角陆阳首次前往问道宗求仙问道，他对出门遇雨有所抱怨。\n"
-            f"2. **奠定基调**：通过开篇确立故事轻松诙谐的基调。\n"
+            f"1. **奠定基调**：通过开篇确立故事轻松诙谐的基调。\n"
         )
 
     prompt = prompt_instruction
     messages = [
-        # 保持或微调 System Message，确保其简洁有效
-        # 示例 System Message (如果需要修改):
-        # {"role": "system", "content": "你是一位精通创作轻松诙谐、口语化修仙故事的幽默作家。请严格模仿提供的语言风格和核心要求进行创作。"},
-        # 保留原来的 system message 逻辑，或根据需要取消下面的注释并调整
-        {"role": "system", "content": "你是一位精通小说创作的幽默作家，特别擅长创作轻松诙谐、充满生活气息的修仙故事。你的风格不同于传统严肃的修仙小说，而是注重角色的鲜活对话、内心吐槽和轻松幽默的情节。请严格遵循用户的要求进行创作。"}, # 稍微精简和聚焦的system message
+       
+        {"role": "system", "content": "你是一位精通小说创作的幽默作家，特别擅长创作轻松诙谐的故事。你的风格不同于传统严肃的小说，而是注重角色的鲜活对话、内心吐槽和轻松幽默的情节。请严格遵循用户的要求进行创作。"}, # 稍微精简和聚焦的system message
         {"role": "user", "content": prompt}
     ]
 
