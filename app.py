@@ -1,264 +1,125 @@
-import openai
 import argparse
-import httpx 
-import time
 import os
-import re 
-import json 
-import copy
-import datetime
+import sys
+import time # 引入 time 模块
 
-API_KEY = "sk-1c6c5c08ade4448690f5b4d2358eaf6a"
-BASE_URL = "https://api.deepseek.com"
+# 导入新模块的功能
+# 确保能找到同级目录的模块 (如果脚本不在项目根目录运行可能需要)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 
-STORY_CONTEXT_FILE = "story_context.json"
-PRUNED_ARCHIVE_FILE = 'pruned_context_archive.json'
-story_context = {}
-
-http_client = httpx.Client()
-
-client = openai.OpenAI(
-    api_key=API_KEY,
-    base_url=BASE_URL,
-    http_client=http_client
-)
-
-def load_story_context():
-    global story_context
-    if os.path.exists(STORY_CONTEXT_FILE):
-        try:
-            with open(STORY_CONTEXT_FILE, 'r', encoding='utf-8') as f:
-                story_context = json.load(f)
-            print(f"Loaded context: {STORY_CONTEXT_FILE}")
-        except Exception as e:
-            print(f"Error loading context: {e}")
-            story_context = {'last_chapter': 0, 'protagonist': {}, 'world': {}, 'plot_nodes': []}
-    else:
-        story_context = {'last_chapter': 0, 'protagonist': {}, 'world': {}, 'plot_nodes': []}
-        save_story_context()
-
-def save_story_context():
-    global story_context
-    try:
-        with open(STORY_CONTEXT_FILE, 'w', encoding='utf-8') as f:
-            json.dump(story_context, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print(f"Error saving context: {e}")
-
-def analyze_structure(original_content):
-    """分析原文章节结构并提取关键剧情节点"""
-    print("Analyzing original chapter structure...")
-    try:
-        messages = [
-            {"role": "system", "content": "你是一个专业的小说结构分析助手"},
-            {"role": "user", "content": f"请分析以下小说章节内容，提取关键剧情节点（包括：重要事件、转折点、角色发展、新设定引入），用简洁的中文短语列表表示。不要包含解释，直接输出JSON数组：\n\n{original_content[:6000]}"}
-        ]
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=messages,
-            temperature=0.1,
-            response_format={"type": "json_object"}
-        )
-        nodes = json.loads(response.choices[0].message.content).get("plot_nodes", [])
-        return nodes[:8]  # 保留最多8个关键节点
-    except Exception as e:
-        print(f"结构分析失败: {e}")
-        return []
-
-def analyze_style(original_content):
-    """增强版风格分析"""
-    print("Analyzing writing style...")
-    try:
-        messages = [
-            {"role": "system", "content": "你是一个专业的文学风格分析助手"},
-            {"role": "user", "content": f"分析以下文本的：1.常用修辞手法 2.典型句式结构 3.标志性词汇 4.叙事节奏 5.对话风格。用JSON格式输出分析结果，包含style_features字段：\n\n{original_content[:6000]}"}
-        ]
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=messages,
-            temperature=0.1,
-            response_format={"type": "json_object"}
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        print(f"风格分析失败: {e}")
-        return {}
-
-def generate_chapter(original_content, style_data, plot_nodes, chapter_num):
-    """生成模仿原剧情的新章节"""
-    print(f"Generating chapter {chapter_num}...")
-    try:
-        current_context = f"当前进度：{story_context.get('last_chapter',0)}章 角色状态：{story_context.get('protagonist',{})}"
-        messages = [
-            {"role": "system", "content": "你是一个专业的小说模仿写作助手。严格遵循以下规则：1.完全按照提供的剧情结构创作 2.保持原有角色关系发展 3.关键节点出现顺序不变"},
-            {"role": "user", "content": f"""
-# 创作任务
-请根据以下要素创作新的第{chapter_num}章内容：
-
-## 原章节关键节点（按顺序出现）
-{json.dumps(plot_nodes, ensure_ascii=False, indent=2)}
-
-## 需要模仿的写作风格
-{json.dumps(style_data.get('style_features',{}), ensure_ascii=False, indent=2)}
-
-## 上下文状态
-{current_context}
-
-## 创作要求
-1. 严格保持原章节的关键事件顺序和故事转折点
-2. 使用全新的场景描写和对话内容
-3. 章节长度保持4000字左右
-4. 使用Markdown格式，以# 第{chapter_num}章 [标题] 开头
-"""}
-        ]
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=messages,
-            temperature=0.65,
-            max_tokens=3500
-        )
-        content = response.choices[0].message.content
-        return format_content(content, chapter_num)
-    except Exception as e:
-        print(f"生成失败: {e}")
-        return None
-
-def format_content(text, chapter_num):
-    """规范化生成内容格式"""
-    text = re.sub(r'^#{1,3}\s*', f'# 第{chapter_num}章 ', text, count=1)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
-def update_context(original_content, new_content):
-    """双上下文更新：同时分析原文和生成内容"""
-    print("Updating story context...")
-    # 分析原文获取设定更新
-    original_nodes = analyze_structure(original_content)
-    if original_nodes:
-        # 保持逻辑不变：存储原文的关键节点以备参考
-        # 如果需要存储新内容的节点，需要调用 analyze_structure(new_content)
-        story_context['plot_nodes'] = original_nodes[-5:]
-
-    # 分析生成内容更新角色状态和世界信息
-    try:
-        messages = [
-            {"role": "system", "content": "你是一个上下文更新助手。请仔细阅读文本，并提取关键信息，以指定的JSON格式返回。"},
-            # 修改提示，明确要求返回包含 protagonist 和 world 键的JSON
-            {"role": "user", "content": f"""从以下生成的小说章节内容中提取关键信息：
-
-1.  **主角状态更新**: 包括获得的新物品、新技能、重要状态变化等。
-2.  **世界信息更新**: 包括新地点、重要世界设定变化、角色关系变化等。
-
-请将提取的信息整理成JSON格式返回，必须包含 'protagonist' 和 'world' 两个顶级键。'protagonist' 键的值是一个对象，包含主角相关的更新；'world' 键的值是一个对象，包含世界信息和角色关系的更新。
-
-如果某方面没有提取到信息，请返回空对象 {{}}。
-
-小说内容：
-{new_content[:3000]}  # 限制输入长度以防超限
-
-输出示例 (如果提取到信息):
-```json
-{{
-  "protagonist": {{
-    "new_ability": "火焰掌握",
-    "status_change": "身受重伤"
-  }},
-  "world": {{
-    "new_location": "迷雾森林",
-    "relationship_change": "与艾莉关系缓和"
-  }}
-}}
-```
-
-输出示例 (如果未提取到信息):
-```json
-{{
-  "protagonist": {{}},
-  "world": {{}}
-}}
-```
-"""}
-        ]
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=messages,
-            temperature=0.1,
-            response_format={"type": "json_object"}
-        )
-        # 尝试解析响应内容
-        response_content = response.choices[0].message.content
-        print(f"Debug: AI response for context update:\n{response_content}") # 添加调试输出
-        updates = json.loads(response_content)
-
-        # 确保 updates 是字典
-        if isinstance(updates, dict):
-            # 更新主角信息，合并字典
-            if 'protagonist' in updates and isinstance(updates['protagonist'], dict):
-                story_context['protagonist'].update(updates['protagonist'])
-            else:
-                print("Warning: 'protagonist' key missing or not a dict in AI response.")
-
-            # 更新世界信息，合并字典
-            if 'world' in updates and isinstance(updates['world'], dict):
-                story_context['world'].update(updates['world'])
-            else:
-                print("Warning: 'world' key missing or not a dict in AI response.")
-        else:
-             print(f"Error: AI response for context update is not a valid JSON object: {updates}")
-
-    except json.JSONDecodeError as e:
-        print(f"上下文更新失败: 无法解析 AI 返回的 JSON - {e}")
-        print(f"Raw AI response: {response_content}") # 输出原始响应帮助调试
-    except Exception as e:
-        print(f"上下文更新失败: {e}")
-
-def process_chapter(args, chapter_num):
-    original_path = os.path.join(args.input_dir, f"{chapter_num}.md")
-    output_path = os.path.join(args.output_dir, f"{chapter_num}.md")
-    
-    if not os.path.exists(original_path):
-        print(f"Missing original chapter {chapter_num}")
-        return
-
-    # 读取原文
-    with open(original_path, 'r', encoding='utf-8') as f:
-        original_content = f.read()
-    
-    # 分析阶段
-    style_data = analyze_style(original_content)
-    plot_nodes = analyze_structure(original_content)
-    
-    # 生成阶段
-    new_content = generate_chapter(original_content, style_data, plot_nodes, chapter_num)
-    
-    if new_content:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        update_context(original_content, new_content)
-        story_context['last_chapter'] = chapter_num
-        save_story_context()
+from config import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR
+from context_manager import load_story_context # 直接使用返回的上下文
+from chapter_processor import process_chapter
 
 def main():
-    parser = argparse.ArgumentParser(description="小说模仿生成器")
-    parser.add_argument('--input_dir', required=True, help="原文目录")
-    parser.add_argument('--output_dir', required=True, help="输出目录")
-    parser.add_argument('--start', type=int, default=1, help="起始章节")
-    parser.add_argument('--end', type=int, required=True, help="结束章节")
+    start_time = time.time() # 记录开始时间
+    parser = argparse.ArgumentParser(description="使用 AI 根据现有章节续写小说")
+    parser.add_argument("--input_dir", type=str, default=DEFAULT_INPUT_DIR, help="包含原始章节文件的目录")
+    parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT_DIR, help="存放生成章节文件的目录")
+    parser.add_argument("--start_chapter", type=int, default=None, help="要开始生成的起始章节号 (包含)")
+    parser.add_argument("--end_chapter", type=int, default=None, help="要结束生成的章节号 (包含)")
+    parser.add_argument("--chapter", type=int, default=None, help="只生成指定的单个章节号")
+    parser.add_argument("--length", type=int, default=3000, help="期望生成章节的大致字数")
     
     args = parser.parse_args()
-    
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-    
-    load_story_context()
-    
-    for chap in range(args.start, args.end+1):
-        start_time = time.time()
-        print(f"\nProcessing Chapter {chap}")
-        process_chapter(args, chap)
-        print(f"Completed in {time.time()-start_time:.1f}s")
-    
-    print("\nProcess completed. Final context saved.")
 
-if __name__ == '__main__':
+    # 初始化：加载故事上下文
+    initial_context = load_story_context()
+    # load_story_context 现在保证返回一个有效的字典 (加载的或默认的)
+    # 不再需要检查 initial_context 是否为 None，因为它总会返回一个字典
+    last_processed_chapter = initial_context.get("last_generated_chapter", 0)
+    print(f"当前上下文记录的最后处理章节为: {last_processed_chapter}")
+
+    # 确定处理范围
+    start_chapter = args.start_chapter
+    end_chapter = args.end_chapter
+    single_chapter = args.chapter
+
+    if single_chapter is not None:
+        start_chapter = single_chapter
+        end_chapter = single_chapter
+    elif start_chapter is None:
+        # 如果未指定 start_chapter，则从上次处理的下一章开始
+        start_chapter = last_processed_chapter + 1
+        print(f"未指定起始章节，将从上一章的下一章开始: {start_chapter}")
+        # 如果同时未指定 end_chapter, 查找输入目录确定最后一章
+        if end_chapter is None:
+            try:
+                # 查找输入目录下的所有 .md 文件
+                input_files = [f for f in os.listdir(args.input_dir) 
+                               if os.path.isfile(os.path.join(args.input_dir, f)) and f.endswith('.md')]
+                # 提取章节号并找到最大值
+                chapter_numbers = []
+                for f in input_files:
+                    try:
+                        chapter_num = int(os.path.splitext(f)[0])
+                        chapter_numbers.append(chapter_num)
+                    except ValueError:
+                        continue # 忽略无法转换为整数的文件名
+                
+                if chapter_numbers:
+                    end_chapter = max(chapter_numbers)
+                    print(f"未指定结束章节，自动检测到输入目录最大章节号为: {end_chapter}")
+                else:
+                    print(f"警告: 未指定结束章节，且无法在输入目录 {args.input_dir} 中找到有效的章节文件，将只处理起始章节 {start_chapter}。")
+                    end_chapter = start_chapter
+            except FileNotFoundError:
+                 print(f"警告: 未指定结束章节，且输入目录 {args.input_dir} 不存在，将只处理起始章节 {start_chapter}。")
+                 end_chapter = start_chapter
+            except Exception as e:
+                 print(f"警告: 查找输入目录章节时出错 ({e})，将只处理起始章节 {start_chapter}。")
+                 end_chapter = start_chapter
+                 
+    elif end_chapter is None:
+        # 如果指定了 start 但没指定 end，则只处理 start 这一章
+        print(f"警告: 未指定结束章节，将只处理起始章节 {start_chapter}。")
+        end_chapter = start_chapter
+        
+    if start_chapter > end_chapter:
+        print(f"错误：起始章节 ({start_chapter}) 不能大于结束章节 ({end_chapter})。")
+        sys.exit(1)
+
+    print(f"\n=== 开始处理章节范围: {start_chapter} 到 {end_chapter} ===")
+
+    # 循环处理指定范围的章节
+    all_successful = True
+    processed_count = 0
+    total_chapters_in_range = end_chapter - start_chapter + 1
+
+    for chapter_num in range(start_chapter, end_chapter + 1):
+        chapter_start_time = time.time()
+        success = process_chapter(chapter_num, 
+                                  args.input_dir, 
+                                  args.output_dir, 
+                                  args.length)
+        time.sleep(30)
+        chapter_end_time = time.time()
+        chapter_duration = chapter_end_time - chapter_start_time
+        
+        processed_count += 1
+        progress_percent = (processed_count / total_chapters_in_range) * 100
+        
+        if not success:
+            print(f"章节 {chapter_num} 处理失败。耗时: {chapter_duration:.2f} 秒. (进度: {progress_percent:.1f}%)")
+            all_successful = False
+            # 决定是否中断
+            # break # 如果希望失败时中断
+        else:
+             print(f"章节 {chapter_num} 处理成功。耗时: {chapter_duration:.2f} 秒. (进度: {progress_percent:.1f}%)")
+
+    print(f"\n=== 章节处理完成 ({start_chapter} 到 {end_chapter}) ===")
+    end_time = time.time() # 记录结束时间
+    time.sleep(30)
+    total_duration = end_time - start_time
+
+    if all_successful:
+        print("所有指定章节处理成功完成。")
+    else:
+        print("部分章节处理失败。请检查以上日志获取详细信息。")
+    
+    print(f"总耗时: {total_duration:.2f} 秒")
+
+if __name__ == "__main__":
     main()
