@@ -43,7 +43,7 @@ CONTEXT_ANALYSIS_MAX_TOKENS = 4096
 CONTEXT_ANALYSIS_TEMPERATURE = 0.1
 
 # 生成章节时，可以有更高的创造性
-CHAPTER_GENERATION_TEMPERATURE = 0.05
+CHAPTER_GENERATION_TEMPERATURE = 0.1
 # 注意：章节生成长度由命令行参数 --length 控制，这里不设置 max_tokens
 
 # 风格分析时的参数

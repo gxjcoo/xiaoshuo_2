@@ -44,7 +44,7 @@
 1.  **生成第 1 到 10 章，输出到 `output_chapters` 目录:**
 
     ```bash
-    python app.py --input_dir 1-50 --output_dir output_chapters --start_chapter 20 --end_chapter 20 --length 4000
+    python app.py --input_dir 1-50 --output_dir output_chapters --start_chapter 1 --end_chapter 2 --length 4000
     ```
 
 2.  **续写第 11 到 20 章 (假设 1-10 章已在 `output_chapters` 中):**
