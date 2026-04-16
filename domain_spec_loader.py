@@ -1,11 +1,9 @@
-"""加载「领域圣经」(DDD) 与「章节规格」(SDD) 文本，供生成提示词使用。"""
+"""加载领域圣经文本与意图文档，供生成提示词使用。"""
 import os
 
 from config import (
     STORY_DOMAIN_DIR,
-    CHAPTER_SPECS_DIR,
     MAX_DOMAIN_PROMPT_CHARS,
-    MAX_CHAPTER_SPEC_CHARS,
     AUTHOR_INTENT_FILE,
     CURRENT_FOCUS_FILE,
     MAX_AUTHOR_INTENT_CHARS,
@@ -45,25 +43,6 @@ def load_story_domain_text(domain_dir=None):
     if len(full) > MAX_DOMAIN_PROMPT_CHARS:
         full = full[:MAX_DOMAIN_PROMPT_CHARS] + "\n\n…（领域文本已按长度截断）"
     return full
-
-
-def load_chapter_spec_text(chapter_number, specs_dir=None):
-    """读取 chapter_specs/{章节号}.md；不存在则返回空串。"""
-    base = specs_dir or CHAPTER_SPECS_DIR
-    path = os.path.join(base, f"{chapter_number}.md")
-    if not os.path.isfile(path):
-        return ""
-
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            text = fh.read().strip()
-    except OSError as e:
-        print(f"警告: 无法读取章节规格 {path}: {e}")
-        return ""
-
-    if len(text) > MAX_CHAPTER_SPEC_CHARS:
-        text = text[:MAX_CHAPTER_SPEC_CHARS] + "\n\n…（章节规格已按长度截断）"
-    return text
 
 
 def _load_optional_text_file(path, max_chars, label):

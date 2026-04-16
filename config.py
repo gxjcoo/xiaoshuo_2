@@ -17,15 +17,14 @@ PRUNED_ARCHIVE_FILE = 'pruned_context_archive.json'
 DEFAULT_INPUT_DIR = '1-50' # 默认原始章节输入目录
 DEFAULT_OUTPUT_DIR = 'output_chapters' # 默认生成章节输出目录
 
-# DDD / SDD：静态领域与章节规格目录（相对项目工作目录）
+# DDD：静态领域目录（相对项目工作目录）
 STORY_DOMAIN_DIR = 'story_domain'
-CHAPTER_SPECS_DIR = 'chapter_specs'
 RUNTIME_DIR = 'runtime'
 AUTHOR_INTENT_FILE = 'author_intent.md'
 CURRENT_FOCUS_FILE = 'current_focus.md'
+AUDIT_RULES_FILE = 'audit_rules.json'
 # 注入提示词时的长度上限（字符），避免超出模型上下文
 MAX_DOMAIN_PROMPT_CHARS = 8000
-MAX_CHAPTER_SPEC_CHARS = 6000
 MAX_AUTHOR_INTENT_CHARS = 3000
 MAX_CURRENT_FOCUS_CHARS = 2000
 
@@ -87,6 +86,9 @@ MAX_CHAPTER_CONTENT_LENGTH = 6000
 # --- 降低 AI 味道配置 ---
 ENABLE_ANTI_AI_REWRITE = True
 ANTI_AI_MAX_ROUNDS = 2
+AUDIT_MAX_REVISE_ROUNDS = 3
+# 最后一轮若仅差少量分数，允许“近阈值放行”以避免长时间重跑后仍不落盘
+AUDIT_NEAR_PASS_DELTA = 3
 
 # --- 文件增长治理（参考 inkos 的保留窗口/压缩思路） ---
 # runtime 目录仅保留最近 N 章的工件（intent/context/trace）
@@ -99,3 +101,7 @@ MAX_RUNTIME_CONTEXT_SNAPSHOT_BYTES = 12000
 MAX_PRUNED_ARCHIVE_ABILITIES = 200
 MAX_PRUNED_ARCHIVE_ELEMENTS = 200
 MAX_PRUNED_ARCHIVE_RELATIONSHIPS = 200
+
+# --- 自动知识同步 ---
+# 章节完成后自动更新 story_domain（无需人工审核）
+AUTO_UPDATE_DOMAIN_KNOWLEDGE = True

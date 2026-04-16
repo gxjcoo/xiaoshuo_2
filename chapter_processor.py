@@ -3,23 +3,21 @@ import json
 
 # 从其他模块导入所需函数和常量
 from config import (
-    CHAPTER_SPECS_DIR,
     RUNTIME_DIR,
+    STORY_DOMAIN_DIR,
+    AUTO_UPDATE_DOMAIN_KNOWLEDGE,
+    AUDIT_RULES_FILE,
+    AUDIT_MAX_REVISE_ROUNDS,
     MAX_RUNTIME_CHAPTER_ARTIFACTS,
     MAX_RUNTIME_INTENT_CHARS,
     MAX_RUNTIME_CONTEXT_SNAPSHOT_BYTES,
 )
 from context_manager import get_current_context, update_story_context_after_chapter
-from ai_handler import (
-    analyze_writing_style,
-    plan_chapter_with_ai,
-    generate_chapter_content,
-    audit_and_revise_chapter_once,
-    reduce_ai_flavor_with_loop,
-)
+from ai_handler import analyze_writing_style, plan_chapter_with_ai, generate_chapter_content
+from audit_pipeline import audit_and_revise_until_pass
+from knowledge_sync import extract_domain_updates
 from domain_spec_loader import (
     load_story_domain_text,
-    load_chapter_spec_text,
     load_author_intent_text,
     load_current_focus_text,
 )
@@ -160,6 +158,105 @@ def cleanup_runtime_artifacts():
     except Exception as e:
         print(f"警告：清理 runtime 工件失败: {e}")
 
+
+def load_audit_rules():
+    """加载审计规则，缺失或异常时回退默认规则。"""
+    default_rules = {
+        "pass_threshold": 85,
+        "max_revise_rounds": AUDIT_MAX_REVISE_ROUNDS,
+        "dimensions": [
+            {"id": "continuity", "name": "连贯性", "weight": 0.3, "requirements": ["剧情衔接自然", "设定不冲突"]},
+            {"id": "pacing", "name": "节奏", "weight": 0.2, "requirements": ["本章有推进", "节奏不过慢"]},
+            {"id": "ai_trace", "name": "AI痕迹", "weight": 0.3, "requirements": ["减少模板句式", "减少总结腔"]},
+            {"id": "voice", "name": "文风", "weight": 0.2, "requirements": ["风格一致", "对话有区分"]},
+        ],
+    }
+    if not os.path.isfile(AUDIT_RULES_FILE):
+        return default_rules
+    try:
+        with open(AUDIT_RULES_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, dict):
+            return default_rules
+        loaded.setdefault("pass_threshold", default_rules["pass_threshold"])
+        loaded.setdefault("max_revise_rounds", default_rules["max_revise_rounds"])
+        loaded.setdefault("dimensions", default_rules["dimensions"])
+        return loaded
+    except Exception as e:
+        print(f"警告：加载审计规则失败，回退默认规则: {e}")
+        return default_rules
+
+
+def build_audit_requirements_for_writing(audit_rules, top_k=6):
+    """将审计规则转为写作前约束，提升首稿命中率。"""
+    dimensions = audit_rules.get("dimensions", [])
+    if not isinstance(dimensions, list) or not dimensions:
+        return ""
+    ranked = sorted(
+        [d for d in dimensions if isinstance(d, dict)],
+        key=lambda d: float(d.get("weight", 0)),
+        reverse=True,
+    )[:max(1, top_k)]
+    lines = []
+    for dim in ranked:
+        name = dim.get("name") or dim.get("id", "未命名维度")
+        reqs = dim.get("requirements", [])
+        if not isinstance(reqs, list) or not reqs:
+            continue
+        req_text = "；".join(str(r).strip() for r in reqs if str(r).strip())
+        if req_text:
+            lines.append(f"- {name}：{req_text}")
+    return "\n".join(lines)
+
+
+def _append_unique_lines(path, title, lines):
+    """将增量行追加到文件末尾，做简单去重。"""
+    if not lines:
+        return
+    existing = ""
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = f.read()
+        except Exception:
+            existing = ""
+    to_add = [ln for ln in lines if ln and ln not in existing]
+    if not to_add:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"\n\n## {title}\n")
+            for ln in to_add:
+                f.write(f"- {ln}\n")
+    except Exception as e:
+        print(f"警告：写入领域增量失败 {path}: {e}")
+
+
+def auto_update_domain_knowledge(chapter_number, chapter_content, current_context):
+    """自动更新 story_domain 增量。"""
+    updates = extract_domain_updates(chapter_content, current_context)
+    _append_unique_lines(
+        os.path.join(STORY_DOMAIN_DIR, "01-glossary.md"),
+        f"自动增量（来源：第{chapter_number}章）",
+        updates.get("glossary", []),
+    )
+    _append_unique_lines(
+        os.path.join(STORY_DOMAIN_DIR, "02-world.md"),
+        f"自动增量（来源：第{chapter_number}章）",
+        updates.get("world", []),
+    )
+    _append_unique_lines(
+        os.path.join(STORY_DOMAIN_DIR, "03-characters.md"),
+        f"自动增量（来源：第{chapter_number}章）",
+        updates.get("characters", []),
+    )
+    _append_unique_lines(
+        os.path.join(STORY_DOMAIN_DIR, "04-voice.md"),
+        f"自动增量（来源：第{chapter_number}章）",
+        updates.get("voice", []),
+    )
+
 def process_chapter(chapter_number, input_dir, output_dir, length):
     """处理单个章节：读取、分析风格、生成、保存、分析上下文、更新上下文"""
     print(f"\n--- 处理章节 {chapter_number} ---")
@@ -210,17 +307,14 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
 
     # 3. 获取当前上下文
     current_context = get_current_context()
+    audit_rules = load_audit_rules()
+    audit_requirements_text = build_audit_requirements_for_writing(audit_rules)
 
     domain_text = load_story_domain_text()
-    chapter_spec_text = load_chapter_spec_text(chapter_number)
     author_intent_text = load_author_intent_text()
     current_focus_text = load_current_focus_text()
     if domain_text:
         print("已加载领域圣经 (story_domain/*.md) 并注入生成提示。")
-    if chapter_spec_text:
-        print(f"已加载本章规格: chapter_specs/{chapter_number}.md")
-    elif os.path.isdir(CHAPTER_SPECS_DIR):
-        print(f"提示: 未找到 {CHAPTER_SPECS_DIR}/{chapter_number}.md，本章将仅依据上下文与风格生成。")
     if author_intent_text:
         print("已加载作者长期意图: author_intent.md")
     if current_focus_text:
@@ -231,7 +325,6 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
         current_context,
         chapter_number,
         previous_chapter_content=previous_chapter_content,
-        chapter_spec_text=chapter_spec_text,
         author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
     )
@@ -247,37 +340,33 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
         previous_chapter_content,
         target_chapter_number=chapter_number,
         domain_text=domain_text,
-        chapter_spec_text=chapter_spec_text,
         chapter_plan_text=chapter_plan_text,
         author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
+        audit_requirements_text=audit_requirements_text,
     )
     if not new_chapter_content:
         print(f"错误：未能生成章节 {chapter_number} 的内容，跳过此章节。")
         return False # 表示处理失败
 
-    # 5. 审校并自动修订一次（必要时）
-    new_chapter_content = audit_and_revise_chapter_once(
+    # 5. 按规则审计并循环修订（含 ai_trace 专属去模板化策略），达标才允许落盘
+    audit_gate_result = audit_and_revise_until_pass(
         new_chapter_content,
         chapter_number,
         writing_style,
+        audit_rules,
+        reference_text=original_content,
         chapter_plan_text=chapter_plan_text,
         domain_text=domain_text,
-        chapter_spec_text=chapter_spec_text,
         author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
     )
-
-    # 5.5 对比原文与生成文，执行去模板化重写循环（降低 AI 味）
-    new_chapter_content = reduce_ai_flavor_with_loop(
-        reference_text=original_content,
-        chapter_content=new_chapter_content,
-        chapter_number=chapter_number,
-        writing_style=writing_style,
-        chapter_plan_text=chapter_plan_text,
-        domain_text=domain_text,
-        chapter_spec_text=chapter_spec_text,
-    )
+    new_chapter_content = audit_gate_result.get("content", new_chapter_content)
+    if not audit_gate_result.get("passed", False):
+        score = audit_gate_result.get("last_audit", {}).get("total_score", 0)
+        threshold = audit_rules.get("pass_threshold", 85)
+        print(f"章节 {chapter_number} 审计未达标（{score} < {threshold}），本次不落盘。")
+        return False
 
     # 写出 runtime 工件（intent/context/trace）
     write_runtime_artifacts(
@@ -287,21 +376,27 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
         {
             "chapter": chapter_number,
             "has_domain_text": bool(domain_text),
-            "has_chapter_spec_text": bool(chapter_spec_text),
             "has_author_intent": bool(author_intent_text),
             "has_current_focus": bool(current_focus_text),
+            "audit_score": audit_gate_result.get("last_audit", {}).get("total_score", 0),
+            "audit_passed": bool(audit_gate_result.get("passed", False)),
             "reference_file": input_filepath,
             "output_file": output_filepath,
         },
     )
     cleanup_runtime_artifacts()
 
-    # 6. 写入新章节文件
+    # 7. 写入新章节文件
     write_chapter_file(output_filepath, new_chapter_content)
 
-    # 7. 更新并保存故事上下文（内部会完成 AI 上下文分析）
+    # 8. 更新并保存故事上下文（内部会完成 AI 上下文分析）
     # 即使 AI 分析失败，也仍会更新章节号与章节结尾摘要
     update_story_context_after_chapter(chapter_number, new_chapter_content)
+
+    # 9. 自动同步 story_domain 增量
+    if AUTO_UPDATE_DOMAIN_KNOWLEDGE:
+        latest_context = get_current_context()
+        auto_update_domain_knowledge(chapter_number, new_chapter_content, latest_context)
 
     print(f"章节 {chapter_number} 处理完成。")
     return True # 表示处理成功

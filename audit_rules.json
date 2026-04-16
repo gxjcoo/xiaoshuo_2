@@ -1,0 +1,149 @@
+{
+  "pass_threshold": 85,
+  "hard_fail_threshold": 60,
+  "max_revise_rounds": 3,
+  "notes": "参考 inkos 多维审计思想：先保一致性与剧情推进，再控 AI 痕迹与可读性。dimension_scores 每项 0-100。",
+  "dimensions": [
+    {
+      "id": "continuity",
+      "name": "剧情连贯性",
+      "weight": 0.1,
+      "requirements": [
+        "与上一章衔接自然，无明显跳轴",
+        "因果链完整，关键事件可追溯",
+        "时间线与空间位移不混乱"
+      ]
+    },
+    {
+      "id": "plan_adherence",
+      "name": "章节意图达成",
+      "weight": 0.08,
+      "requirements": [
+        "本章完成既定核心目标",
+        "未偏离 chapter plan 的主冲突",
+        "若目标未达成，需要有合理阶段性结果"
+      ]
+    },
+    {
+      "id": "mainline_progress",
+      "name": "主线推进",
+      "weight": 0.08,
+      "requirements": [
+        "本章对主线有实质推进",
+        "避免纯填充或原地踏步",
+        "章节结尾形成有效后续驱动力"
+      ]
+    },
+    {
+      "id": "character_consistency",
+      "name": "角色一致性",
+      "weight": 0.09,
+      "requirements": [
+        "人物动机和行为与既有设定一致",
+        "角色关系变化有依据",
+        "角色能力/资源使用不突兀"
+      ]
+    },
+    {
+      "id": "dialogue_distinctiveness",
+      "name": "对话区分度",
+      "weight": 0.06,
+      "requirements": [
+        "不同角色说话风格可区分",
+        "对话具备口语节奏，不是统一书面腔",
+        "对话能承担信息或冲突推进"
+      ]
+    },
+    {
+      "id": "world_consistency",
+      "name": "世界观一致性",
+      "weight": 0.1,
+      "requirements": [
+        "不与 story_domain 规则冲突",
+        "术语使用统一，无自相矛盾",
+        "地点、势力、规则前后一致"
+      ]
+    },
+    {
+      "id": "reference_fidelity",
+      "name": "仿写贴合度",
+      "weight": 0.07,
+      "requirements": [
+        "与参考章节在剧情走向上保持同轨",
+        "避免脱离参考文本硬造新主线",
+        "新增内容仅做细节补强，不篡改既有冲突"
+      ]
+    },
+    {
+      "id": "hook_management",
+      "name": "伏笔与回收健康度",
+      "weight": 0.07,
+      "requirements": [
+        "新增伏笔不过载且清晰可追踪",
+        "历史 pending_hooks 有阶段性回收",
+        "避免无意义堆钩子或强行回收"
+      ]
+    },
+    {
+      "id": "pacing",
+      "name": "节奏控制",
+      "weight": 0.08,
+      "requirements": [
+        "冲突-缓冲-推进节奏平衡",
+        "信息释放不拖沓也不过爆",
+        "章节内部有节拍变化"
+      ]
+    },
+    {
+      "id": "scene_vividness",
+      "name": "场景与动作具象度",
+      "weight": 0.05,
+      "requirements": [
+        "有可感知的动作/物件/环境细节",
+        "少抽象概括，多具体呈现",
+        "关键节点有画面支撑"
+      ]
+    },
+    {
+      "id": "emotional_arc",
+      "name": "情绪与张力曲线",
+      "weight": 0.05,
+      "requirements": [
+        "情绪变化有过渡，不突变",
+        "冲突压力在章节内有累积或释放",
+        "结尾情绪能承接下一章"
+      ]
+    },
+    {
+      "id": "voice",
+      "name": "文风贴合度",
+      "weight": 0.07,
+      "requirements": [
+        "与参考文本风格保持同调",
+        "叙述语气稳定，少风格漂移",
+        "语言质感符合目标题材"
+      ]
+    },
+    {
+      "id": "ai_trace",
+      "name": "AI痕迹控制",
+      "weight": 0.07,
+      "requirements": [
+        "避免连续工整句式和排比堆叠",
+        "减少说明书式总结段落",
+        "降低高频连接词和套路转折语",
+        "避免角色同腔化"
+      ]
+    },
+    {
+      "id": "readability",
+      "name": "可读性",
+      "weight": 0.06,
+      "requirements": [
+        "段落结构清晰，阅读阻力低",
+        "句长有变化，不单调",
+        "关键信息易识别"
+      ]
+    }
+  ]
+}
