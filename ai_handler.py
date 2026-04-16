@@ -5,6 +5,7 @@ import openai
 
 # 从 config 模块导入配置
 from config import (
+    LLM_PROVIDER,
     API_KEY,
     BASE_URL,
     API_HTTP_CONNECT_TIMEOUT,
@@ -21,8 +22,70 @@ from config import (
     VOLUME_CHAPTER_SIZE,
 )
 
+def _extract_text_from_ark_response(data):
+    """从 Ark /responses 返回中尽量提取纯文本。"""
+    if isinstance(data, dict):
+        if isinstance(data.get("output_text"), str) and data.get("output_text", "").strip():
+            return data["output_text"].strip()
+
+        output = data.get("output")
+        if isinstance(output, list):
+            chunks = []
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if isinstance(content, list):
+                    for c in content:
+                        if not isinstance(c, dict):
+                            continue
+                        text = c.get("text")
+                        if isinstance(text, str) and text.strip():
+                            chunks.append(text.strip())
+            if chunks:
+                return "\n".join(chunks).strip()
+    return ""
+
+
+def _call_ark_responses_api(messages, model, timeout, max_tokens=None, temperature=0.7):
+    """调用豆包 Ark /responses 接口。"""
+    input_payload = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        input_payload.append({
+            "role": role,
+            "content": [{"type": "input_text", "text": content}],
+        })
+
+    payload = {
+        "model": model,
+        "input": input_payload,
+        "temperature": temperature,
+    }
+    if max_tokens is not None:
+        payload["max_output_tokens"] = int(max_tokens)
+
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    }
+    endpoint = f"{BASE_URL.rstrip('/')}/responses"
+
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.post(endpoint, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        text = _extract_text_from_ark_response(data)
+        if text:
+            return text
+        raise RuntimeError(f"Ark 返回中未提取到文本: {str(data)[:600]}")
+
+
 def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, response_format=None):
-    """调用 DeepSeek API 的通用函数，包含重试逻辑与 HTTP 读超时。"""
+    """调用 LLM 的通用函数（DeepSeek / 豆包 Ark）。"""
     timeout = httpx.Timeout(
         connect=API_HTTP_CONNECT_TIMEOUT,
         read=API_HTTP_READ_TIMEOUT,
@@ -46,30 +109,39 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
                 flush=True,
             )
 
-            with httpx.Client(timeout=timeout) as http_client:
-                client = openai.OpenAI(
-                    api_key=API_KEY,
-                    base_url=BASE_URL,
-                    http_client=http_client,
+            if LLM_PROVIDER == "doubao":
+                content = _call_ark_responses_api(
+                    messages=messages,
+                    model=model,
+                    timeout=timeout,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
                 )
+            else:
+                with httpx.Client(timeout=timeout) as http_client:
+                    client = openai.OpenAI(
+                        api_key=API_KEY,
+                        base_url=BASE_URL,
+                        http_client=http_client,
+                    )
 
-                kwargs = {
-                    "model": model,
-                    "messages": messages,
-                    "temperature": temperature,
-                }
-                if max_tokens is not None:
-                    kwargs["max_tokens"] = max_tokens
-                if response_format is not None:
-                    kwargs["response_format"] = response_format
+                    kwargs = {
+                        "model": model,
+                        "messages": messages,
+                        "temperature": temperature,
+                    }
+                    if max_tokens is not None:
+                        kwargs["max_tokens"] = max_tokens
+                    if response_format is not None:
+                        kwargs["response_format"] = response_format
 
-                try:
-                    response = client.chat.completions.create(**kwargs)
-                    content = response.choices[0].message.content.strip()
-                except AttributeError:
-                    kwargs["model"] = model
-                    response = openai.Completion.create(**kwargs)
-                    content = response.choices[0].text.strip()
+                    try:
+                        response = client.chat.completions.create(**kwargs)
+                        content = response.choices[0].message.content.strip()
+                    except AttributeError:
+                        kwargs["model"] = model
+                        response = openai.Completion.create(**kwargs)
+                        content = response.choices[0].text.strip()
 
             return content
 
@@ -286,6 +358,34 @@ def generate_chapter_content(
         )
 
     # --- 核心创作要求 (共同部分) ---
+    production_hard_rules = (
+        f"【产出侧结构硬约束（必须执行）】\n"
+        f"1. **事件密度硬约束**：每 500-700 字必须出现一次不可逆变化（冲突升级/关系变化/代价落地/任务状态跃迁其一），"
+        f"禁止连续大段“解释世界/复盘策略/施工过程”替代剧情推进。\n"
+        f"2. **解释上限硬约束**：连续解释/判断型段落最多 2 段，第 3 段前必须插入动作对抗、意外反馈或人物交锋。\n"
+        f"3. **角色声纹硬约束**：至少两名核心角色呈现稳定差异化说话方式（句长、语气词、反问习惯或口癖），"
+        f"禁止全员同一书面腔。\n"
+        f"4. **开头/结尾反同构**：开篇入口与收束方式都要避免模板化；"
+        f"开头优先用动作或异常信息切入，结尾优先落在新变量/新压力，不用解释性总结句收尾。\n"
+        f"5. **拒绝任务清单文**：系统、建设、筹备类内容必须嵌入冲突和人物反应中呈现，"
+        f"禁止按“先做A再做B再做C”的说明书顺序平铺。\n"
+        f"6. **写前自检（只在脑内执行，不要输出）**："
+        f"“本段是否发生变化？”“是否在用解释代替戏剧？”“角色说话是否可被区分？”。\n\n"
+    )
+
+    implicit_two_phase_contract = (
+        f"【隐式两阶段写作契约（强制）】\n"
+        f"你必须先在内部完成“结构计划”，再写正文；但结构计划属于隐式推理，不得出现在输出中。\n"
+        f"阶段A（内部静默规划，不输出）：\n"
+        f"- 先为本章规划 4-7 个叙事节拍（每个节拍必须有事件变化）\n"
+        f"- 标注每个节拍的冲突点、信息释放点、角色声纹策略\n"
+        f"- 规划开头入口和结尾落点，确保不与近章同构\n"
+        f"阶段B（仅输出正文）：\n"
+        f"- 严格按阶段A的节拍写作，但语言自然，不要像提纲复述\n"
+        f"- 禁止输出任何计划痕迹：如“节拍1/阶段A/结构计划/写作意图/自检”等字样\n"
+        f"- 最终输出只能是章节标题+正文，不得包含解释、注释、清单、表格\n\n"
+    )
+
     core_requirements = (
         f"分析出的原文语言风格：\n{writing_style}\n\n"
         f"{current_context_summary}\n\n"
@@ -295,6 +395,8 @@ def generate_chapter_content(
         f"【近期焦点（优先于长期意图）】\n{current_focus_text if current_focus_text else '无'}\n\n"
         f"【审计规则前置约束（写作时必须遵守）】\n{audit_requirements_text if audit_requirements_text else '无'}\n\n"
         f"【本章意图规划（必须落实）】\n{chapter_plan_text if chapter_plan_text else '无（请按上下文自主规划）'}\n\n"
+        f"{implicit_two_phase_contract}"
+        f"{production_hard_rules}"
         f"【核心创作要求】：\n"
         f"1. **风格平衡**：保持原文的风格，但同时注重主线推进。\n"
         f"2. **内容连贯**：严格维持剧情、角色性格和世界设定的连贯性。\n"
@@ -365,6 +467,25 @@ def generate_chapter_content(
             max_tokens=target_length, 
             temperature=CHAPTER_GENERATION_TEMPERATURE
         )
+        if not new_content:
+            return None
+
+        # 清洗误泄露的“计划/提纲/自检”内容，确保只保留章节成文
+        leakage_markers = (
+            "阶段A", "阶段B", "结构计划", "节拍", "写作意图", "自检",
+            "仅内部", "隐式推理", "提纲", "PLAN", "CHECKLIST"
+        )
+        lines = (new_content or "").splitlines()
+        cleaned_lines = []
+        for ln in lines:
+            stripped = ln.strip()
+            if not stripped:
+                cleaned_lines.append(ln)
+                continue
+            if any(marker in stripped for marker in leakage_markers):
+                continue
+            cleaned_lines.append(ln)
+        new_content = "\n".join(cleaned_lines).strip()
         
         if not new_content.startswith("# "):
             print("警告：生成的内容未按预期以 '# ' 开头。可能缺少标题。尝试在开头添加默认标题。")

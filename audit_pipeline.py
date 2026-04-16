@@ -190,7 +190,13 @@ def evaluate_chapter_with_rules(
 
         # 规则命中严重时强制不通过，避免“分数侥幸过线”
         severe_hits = len([i for i in rule_issues if isinstance(i, dict) and i.get("severity") == "warning"])
-        if severe_hits >= 3:
+        structural_hard_rules = {"事件密度不足", "解释段超限", "角色声纹同构", "角色声纹不足"}
+        structural_hard_hits = [
+            i for i in rule_issues
+            if isinstance(i, dict) and i.get("rule") in structural_hard_rules
+        ]
+        result["structural_hard_hits"] = len(structural_hard_hits)
+        if severe_hits >= 3 or structural_hard_hits:
             result["pass"] = False
         return result
     except Exception:

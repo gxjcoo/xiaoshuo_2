@@ -25,6 +25,16 @@ TRANSITION_WORDS = [
     "接着",
 ]
 
+COGNITIVE_MARKERS = [
+    "觉得", "认为", "意识到", "明白", "知道", "分析", "判断", "盘算", "思考", "推测", "估计",
+    "回忆", "琢磨", "理解", "推断", "复盘", "意味着", "所以", "因此",
+]
+
+EVENT_MARKERS = [
+    "突然", "猛地", "冲", "砸", "打", "杀", "跪", "喊", "吼", "扑", "炸", "裂", "断", "死",
+    "受伤", "战书", "系统", "任务", "解锁", "出现", "进攻", "偷袭", "逃", "追",
+]
+
 
 def _split_sentences(text):
     parts = re.split(r"[。！？!?]", text or "")
@@ -122,6 +132,120 @@ def _dialogue_voice_similarity(text):
     return ratio, [top]
 
 
+def _event_density_issue(text, window_chars=650):
+    text = text or ""
+    if len(text) < window_chars:
+        return None
+    windows = [text[i:i + window_chars] for i in range(0, len(text), window_chars)]
+    low_event_windows = 0
+    for w in windows:
+        marker_hits = sum(w.count(m) for m in EVENT_MARKERS)
+        quote_hits = len(re.findall(r"[“\"].+?[”\"]", w))
+        if marker_hits + quote_hits < 3:
+            low_event_windows += 1
+    if low_event_windows >= max(2, len(windows) // 2):
+        return {
+            "rule": "事件密度不足",
+            "severity": "warning",
+            "description": f"{low_event_windows}/{len(windows)} 个文本窗口缺少有效事件推进，存在解释替代剧情的问题。",
+            "suggestion": "每 500-700 字至少落一处不可逆变化（冲突升级、关系变化、代价落地、任务状态跃迁）。",
+            "span_hint": "整章推进结构",
+        }, 12
+    return None
+
+
+def _exposition_overflow_issue(paragraphs):
+    if not paragraphs or len(paragraphs) < 4:
+        return None
+    streak = 0
+    max_streak = 0
+    for p in paragraphs:
+        cog_hits = sum(p.count(m) for m in COGNITIVE_MARKERS)
+        quote_hits = len(re.findall(r"[“\"].+?[”\"]", p))
+        action_hits = sum(p.count(m) for m in EVENT_MARKERS)
+        # 解释段：认知词高，动作和对话低
+        is_exposition = cog_hits >= 2 and quote_hits == 0 and action_hits <= 1
+        if is_exposition:
+            streak += 1
+            max_streak = max(max_streak, streak)
+        else:
+            streak = 0
+    if max_streak >= 3:
+        return {
+            "rule": "解释段超限",
+            "severity": "warning",
+            "description": f"检测到连续 {max_streak} 段解释/判断型段落，叙事有“复盘腔”倾向。",
+            "suggestion": "连续两段解释后必须插入动作对抗、意外反馈或人物交锋，禁止长段纯判断推进。",
+            "span_hint": "中段叙事",
+        }, 10
+    return None
+
+
+def _extract_dialogue_records(text):
+    records = []
+    # 通用说话人识别：仅从对话左侧近邻文本中抽取“2-6字中文词 + 说/喊/问/道”等模式
+    speaker_patterns = [
+        re.compile(r"([\u4e00-\u9fff]{2,6})(?:低声|高声|冷声|沉声|轻声)?(?:说|道|问|喊|吼|应道|嘀咕|回道|答道)$"),
+        re.compile(r"(?:对面|旁边|身后)?(?:的)?([\u4e00-\u9fff]{2,6})(?:低声|高声|冷声|沉声|轻声)?(?:说|道|问|喊|吼|应道|嘀咕|回道|答道)$"),
+    ]
+    for m in re.finditer(r"[“\"]([^”\"]{2,100})[”\"]", text or ""):
+        line = m.group(1).strip()
+        left = (text[max(0, m.start() - 40):m.start()] or "")
+        speaker = "unknown"
+        left_tail = re.sub(r"[\s\n\r，。！？!?：:、；;（）()【】\[\]《》\-…,.]+", "", left)
+        for pattern in speaker_patterns:
+            match = pattern.search(left_tail)
+            if match:
+                speaker = match.group(1)
+                break
+        records.append((speaker, line))
+    return records
+
+
+def _voiceprint_gap_issue(text):
+    records = _extract_dialogue_records(text)
+    if len(records) < 6:
+        return None
+    by_speaker = {}
+    for speaker, line in records:
+        by_speaker.setdefault(speaker, []).append(line)
+    meaningful = {k: v for k, v in by_speaker.items() if k != "unknown" and len(v) >= 2}
+    if len(meaningful) < 2:
+        return {
+            "rule": "角色声纹不足",
+            "severity": "warning",
+            "description": "可识别说话人不足 2 组，角色对话声线区分度弱。",
+            "suggestion": "至少给两名核心角色固定口癖/句长偏好/语气差异，避免同一书面腔。",
+            "span_hint": "对话层",
+        }, 8
+
+    def features(lines):
+        joined = " ".join(lines)
+        short = sum(1 for x in lines if len(x) <= 10) / max(1, len(lines))
+        modal = sum(joined.count(x) for x in ("啊", "呢", "吧", "哎", "嘛", "诶"))
+        qmark = joined.count("？") + joined.count("?")
+        return short, modal / max(1, len(joined)), qmark / max(1, len(lines))
+
+    speakers = list(meaningful.keys())[:3]
+    feats = [features(meaningful[s]) for s in speakers]
+    # 若两名角色特征过于接近，判同腔
+    too_close_pairs = 0
+    for i in range(len(feats)):
+        for j in range(i + 1, len(feats)):
+            dist = sum(abs(feats[i][k] - feats[j][k]) for k in range(3))
+            if dist < 0.18:
+                too_close_pairs += 1
+    if too_close_pairs >= 1:
+        return {
+            "rule": "角色声纹同构",
+            "severity": "warning",
+            "description": f"主要角色对话风格距离过近（近似对数: {too_close_pairs}），存在同一作者声线。",
+            "suggestion": "为角色建立固定说话策略：一人短句打断，一人完整陈述，一人口头禅/反问偏好。",
+            "span_hint": "角色台词",
+        }, 10
+    return None
+
+
 def analyze_ai_trace(text, recent_chapter_texts=None):
     text = text or ""
     issues = []
@@ -213,6 +337,27 @@ def analyze_ai_trace(text, recent_chapter_texts=None):
             "suggestion": "给至少一名角色改成短句/口语/打断式表达，拉开说话习惯差异。",
             "span_hint": "对话句",
         })
+
+    # 6.5) 结构硬约束：事件密度
+    density_res = _event_density_issue(text)
+    if density_res:
+        item, penalty = density_res
+        score_penalty += penalty
+        issues.append(item)
+
+    # 6.6) 结构硬约束：解释上限
+    exposition_res = _exposition_overflow_issue(paragraphs)
+    if exposition_res:
+        item, penalty = exposition_res
+        score_penalty += penalty
+        issues.append(item)
+
+    # 6.7) 结构硬约束：角色声纹差异
+    voiceprint_res = _voiceprint_gap_issue(text)
+    if voiceprint_res:
+        item, penalty = voiceprint_res
+        score_penalty += penalty
+        issues.append(item)
 
     # 7) 跨章短语重复（近 3-5 章）
     valid_recent = [t for t in recent_chapter_texts if isinstance(t, str) and t.strip()]

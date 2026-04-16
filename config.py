@@ -1,10 +1,42 @@
 import os
 
+def _load_local_dotenv():
+    """从项目根目录 .env 读取环境变量（不覆盖系统已存在变量）。"""
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.isfile(env_path):
+        return
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except Exception:
+        # .env 读取失败时不阻断主流程
+        pass
+
+_load_local_dotenv()
+
 # --- API 和路径配置 ---
-# 尝试从环境变量获取 API Key，如果未设置，则使用占位符
-# 在实际使用中，请确保设置了 DEEPSEEK_API_KEY 环境变量
-API_KEY = 'sk-1c6c5c08ade4448690f5b4d2358eaf6a'
-BASE_URL = "https://api.deepseek.com/v1"
+# 可选: "deepseek" | "doubao"
+# 优先使用环境变量覆盖，便于在不同机器/环境切换
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "doubao").strip().lower()
+
+if LLM_PROVIDER == "doubao":
+    # 豆包（火山方舟 Ark）配置
+    API_KEY = os.environ.get("DOUBAO_API_KEY", os.environ.get("ARK_API_KEY", ""))
+    BASE_URL = os.environ.get("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
+    DEFAULT_LLM_MODEL = os.environ.get("DOUBAO_MODEL", "doubao-seed-2-0-pro-260215")
+else:
+    # DeepSeek 配置
+    API_KEY = os.environ.get("DEEPSEEK_API_KEY", os.environ.get("API_KEY", ""))
+    BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    DEFAULT_LLM_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 # HTTP 超时（秒）。未设置时 httpx 可能长时间无响应，看起来像「卡住」。
 # 生成长章节若超时，可调大环境变量 API_HTTP_READ_TIMEOUT，或在 config 里改默认值。
@@ -61,9 +93,10 @@ DEFAULT_CONTEXT = {
 
 # --- AI 相关配置 ---
 # AI 模型名称
-STYLE_ANALYSIS_MODEL = "deepseek-chat"
-CHAPTER_GENERATION_MODEL = "deepseek-chat"
-CONTEXT_ANALYSIS_MODEL = "deepseek-chat"
+# 可分别覆写，不设置则使用当前 provider 的 DEFAULT_LLM_MODEL
+STYLE_ANALYSIS_MODEL = os.environ.get("STYLE_ANALYSIS_MODEL", DEFAULT_LLM_MODEL)
+CHAPTER_GENERATION_MODEL = os.environ.get("CHAPTER_GENERATION_MODEL", DEFAULT_LLM_MODEL)
+CONTEXT_ANALYSIS_MODEL = os.environ.get("CONTEXT_ANALYSIS_MODEL", DEFAULT_LLM_MODEL)
 
 # AI 请求参数
 # 分析上下文时，为了确保 JSON 完整性，token 限制设大一些
