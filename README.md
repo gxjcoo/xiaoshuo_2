@@ -18,6 +18,15 @@
   ```
   (`requirements.txt` 应包含 `openai` 和 `httpx`)
 
+## 领域 + 章节规格（DDD / SDD）
+
+生成每一章时，除了 `story_context.json` 里的动态摘要外，还会自动读取：
+
+- **`story_domain/*.md`（领域圣经，DDD）**：世界观、术语统一、人物底线、叙事硬约束。多个文件按文件名排序合并注入提示词；以 `_` 开头的 `.md` 会被忽略（可作笔记）。
+- **`chapter_specs/{章节号}.md`（本章规格，SDD）**：本章要达成的情节目标、必须揭示的信息、禁止项等。没有对应文件时，行为与旧版一致，仅按风格与上下文续写。
+
+可按 `chapter_specs/_TEMPLATE.md` 复制为 `1.md`、`2.md` …… 后填写。长度上限见 `config.py` 中的 `MAX_DOMAIN_PROMPT_CHARS` / `MAX_CHAPTER_SPEC_CHARS`。
+
 ## 配置
 
 1.  **API 密钥**: 需要一个有效的 DeepSeek API 密钥。目前，密钥是硬编码在 `app.py` 文件顶部的 `API_KEY` 变量中。**请务必在使用前将其替换为您自己的密钥。**

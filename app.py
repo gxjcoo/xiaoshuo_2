@@ -94,7 +94,6 @@ def main():
                                   args.input_dir, 
                                   args.output_dir, 
                                   args.length)
-        time.sleep(30)
         chapter_end_time = time.time()
         chapter_duration = chapter_end_time - chapter_start_time
         
@@ -108,10 +107,10 @@ def main():
             # break # 如果希望失败时中断
         else:
              print(f"章节 {chapter_num} 处理成功。耗时: {chapter_duration:.2f} 秒. (进度: {progress_percent:.1f}%)")
+             time.sleep(30)
 
     print(f"\n=== 章节处理完成 ({start_chapter} 到 {end_chapter}) ===")
     end_time = time.time() # 记录结束时间
-    time.sleep(30)
     total_duration = end_time - start_time
 
     if all_successful:

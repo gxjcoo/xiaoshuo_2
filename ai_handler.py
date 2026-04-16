@@ -6,73 +6,85 @@ import openai
 
 # 从 config 模块导入配置
 from config import (
-    API_KEY, BASE_URL, 
-    STYLE_ANALYSIS_MODEL, CHAPTER_GENERATION_MODEL, CONTEXT_ANALYSIS_MODEL,
-    CONTEXT_ANALYSIS_MAX_TOKENS, CONTEXT_ANALYSIS_TEMPERATURE,
-    STYLE_ANALYSIS_MAX_TOKENS, STYLE_ANALYSIS_TEMPERATURE,
+    API_KEY,
+    BASE_URL,
+    API_HTTP_CONNECT_TIMEOUT,
+    API_HTTP_READ_TIMEOUT,
+    STYLE_ANALYSIS_MODEL,
+    CHAPTER_GENERATION_MODEL,
+    CONTEXT_ANALYSIS_MODEL,
+    CONTEXT_ANALYSIS_MAX_TOKENS,
+    CONTEXT_ANALYSIS_TEMPERATURE,
+    STYLE_ANALYSIS_MAX_TOKENS,
+    STYLE_ANALYSIS_TEMPERATURE,
     CHAPTER_GENERATION_TEMPERATURE,
-    STYLE_ANALYSIS_MAX_TOKENS, STYLE_ANALYSIS_TEMPERATURE,
-    MAX_CHAPTER_CONTENT_LENGTH
+    MAX_CHAPTER_CONTENT_LENGTH,
 )
 
 def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, response_format=None):
-    """调用 DeepSeek API 的通用函数，包含重试逻辑"""
-    http_client = httpx.Client()
-
-    client = openai.OpenAI(
-        api_key=API_KEY,
-        base_url=BASE_URL,
-        http_client=http_client
+    """调用 DeepSeek API 的通用函数，包含重试逻辑与 HTTP 读超时。"""
+    timeout = httpx.Timeout(
+        connect=API_HTTP_CONNECT_TIMEOUT,
+        read=API_HTTP_READ_TIMEOUT,
+        write=API_HTTP_CONNECT_TIMEOUT,
+        pool=API_HTTP_CONNECT_TIMEOUT,
     )
-    
+
     retries = 3
     delay = 5
     last_exception = None
-    
+
     for attempt in range(retries):
         try:
-            print(f"API 请求 (尝试 {attempt + 1}/{retries}): 模型={model}, 温度={temperature}")
-            
-            # 构建请求参数
-            kwargs = {
-                "model": model,
-                "messages": messages,
-                "temperature": temperature
-            }
-            
-            # 添加可选参数
-            if max_tokens is not None:
-                kwargs["max_tokens"] = max_tokens
-                
-            if response_format is not None:
-                kwargs["response_format"] = response_format
-            
-            # 发送请求
-            try:
-                # 尝试使用新版API
-                response = client.chat.completions.create(**kwargs)
-                content = response.choices[0].message.content.strip()
-            except AttributeError:
-                # 如果新版API失败，尝试使用旧版API
-                kwargs["model"] = model  # 确保模型名称正确设置
-                response = openai.Completion.create(**kwargs)
-                content = response.choices[0].text.strip()
-            
+            print(
+                f"API 请求 (尝试 {attempt + 1}/{retries}): 模型={model}, 温度={temperature}, "
+                f"读超时={API_HTTP_READ_TIMEOUT}s",
+                flush=True,
+            )
+            print(
+                "  → 等待服务端响应中（网络慢或模型排队时可能需一至数分钟，并非死机）…",
+                flush=True,
+            )
+
+            with httpx.Client(timeout=timeout) as http_client:
+                client = openai.OpenAI(
+                    api_key=API_KEY,
+                    base_url=BASE_URL,
+                    http_client=http_client,
+                )
+
+                kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                }
+                if max_tokens is not None:
+                    kwargs["max_tokens"] = max_tokens
+                if response_format is not None:
+                    kwargs["response_format"] = response_format
+
+                try:
+                    response = client.chat.completions.create(**kwargs)
+                    content = response.choices[0].message.content.strip()
+                except AttributeError:
+                    kwargs["model"] = model
+                    response = openai.Completion.create(**kwargs)
+                    content = response.choices[0].text.strip()
+
             return content
-            
+
         except Exception as e:
             last_exception = e
-            print(f"请求失败 (尝试 {attempt + 1}/{retries}): {str(e)}")
-            if attempt < retries - 1:  # 不是最后一次尝试
-                print(f"将在 {delay} 秒后重试...")
+            print(f"请求失败 (尝试 {attempt + 1}/{retries}): {str(e)}", flush=True)
+            if attempt < retries - 1:
+                print(f"将在 {delay} 秒后重试...", flush=True)
                 time.sleep(delay)
                 delay *= 2
             else:
-                print(f"已达到最大重试次数 ({retries})，请求失败。")
-    
-    # 所有尝试都失败
+                print(f"已达到最大重试次数 ({retries})，请求失败。", flush=True)
+
     if last_exception:
-        print(f"所有 API 调用尝试均失败。最后的错误: {str(last_exception)}")
+        print(f"所有 API 调用尝试均失败。最后的错误: {str(last_exception)}", flush=True)
     return None
 
 def analyze_writing_style(text_sample):
@@ -138,8 +150,20 @@ def analyze_writing_style(text_sample):
         print(f"分析风格时发生错误: {e}")
         return "未能分析出风格，将使用默认风格。文本应当保持轻松幽默的基调，使用生动形象的比喻和适度的夸张手法。"
 
-def generate_chapter_content(current_context, writing_style, target_length, previous_chapter_content=None, target_chapter_number=None):
-    """使用 AI 生成新的章节内容"""
+def generate_chapter_content(
+    current_context,
+    writing_style,
+    target_length,
+    previous_chapter_content=None,
+    target_chapter_number=None,
+    domain_text="",
+    chapter_spec_text="",
+):
+    """使用 AI 生成新的章节内容。
+
+    domain_text: 领域圣经（DDD），静态设定与统一说法。
+    chapter_spec_text: 本章规格（SDD），本章必须满足的写作契约。
+    """
     context_json = json.dumps(current_context, ensure_ascii=False, indent=2)
     if target_chapter_number is None:
         chapter_number = current_context.get("last_generated_chapter", 0) + 1
@@ -154,18 +178,41 @@ def generate_chapter_content(current_context, writing_style, target_length, prev
     core_items = current_context.get('core_items', [])
     core_elements = f"核心角色：{', '.join(core_characters) if core_characters else '无'}, 核心道具：{', '.join(core_items) if core_items else '无'}"
 
+    ddd_sdd_block = ""
+    if domain_text:
+        ddd_sdd_block += (
+            f"【领域圣经 DDD（静态设定，优先级高）】\n"
+            f"以下内容为项目约定的世界观、术语与硬约束；与下文冲突时以本节为准，不得自相矛盾。\n\n"
+            f"{domain_text}\n\n"
+        )
+    if chapter_spec_text:
+        ddd_sdd_block += (
+            f"【本章规格 SDD（本章契约，优先级高）】\n"
+            f"以下为本章必须完成的叙事目标、信息揭示与禁忌；请在满足风格与连贯的前提下逐项落实。\n\n"
+            f"{chapter_spec_text}\n\n"
+        )
+
     # --- 核心创作要求 (共同部分) ---
     core_requirements = (
         f"分析出的原文语言风格：\n{writing_style}\n\n"
         f"{current_context_summary}\n\n"
         f"{core_elements}\n\n"
+        f"{ddd_sdd_block}"
         f"【核心创作要求】：\n"
         f"1. **风格平衡**：保持原文的风格，但同时注重主线推进。\n"
         f"2. **内容连贯**：严格维持剧情、角色性格和世界设定的连贯性。\n"
         f"3. **主线推进**：每章应当推进主要剧情或角色发展，而不仅仅提供笑点，幽默应服务于情节而非喧宾夺主。\n"
         f"4. **标题要求**：为第 {chapter_number} 章构思一个标题（格式：'第{chapter_number}章 标题内容...'），放在内容最开始。\n"
         f"5. **字数要求**：生成约 {target_length} 字正文内容。\n"
-        f"6. **结构平衡**：保持对话、叙述和内心活动的平衡，不过分倚重单一表达方式。\n\n"
+        f"6. **结构平衡**：保持对话、叙述和内心活动的平衡，不过分倚重单一表达方式。\n"
+        f"7. **DDD/SDD**：若上方提供了领域圣经或本章规格，必须严格遵守；无法满足时优先删减次要描写，不得编造与圣经冲突的设定。\n"
+        f"8. **人味儿与反模板（降低「AI 腔」，与剧情要求同等重要）**：\n"
+        f"   - 句式长短必须错落，避免连续多句长度、节奏几乎相同；少用排比、对仗、三句一组的 slogan 式金句。\n"
+        f"   - 少用说明文收束：避免段尾高频出现「这一刻/总之/显然/不禁/他明白」类万能升华；允许信息不完整、留一点语意跳跃。\n"
+        f"   - 对话要有不同角色的口气与打断，避免所有人说话都像同一份标准书面语；可适度加入口语、半截话、停顿。\n"
+        f"   - 描写优先具体动作、物件与感官细节，少用抽象形容词和成语堆叠。\n"
+        f"   - 若有系统/提示播报，不要连续多条同一腔调的通知，用环境声、动作、角色吐槽或走神打断。\n"
+        f"   - 禁止整段「百科词条」「论文摘要」「产品说明书」语气；禁止列表式交代世界观（除非原作明显如此）。\n\n"
     )
 
     # 构建提示指令
@@ -195,8 +242,15 @@ def generate_chapter_content(current_context, writing_style, target_length, prev
 
     prompt = prompt_instruction
     messages = [
-        {"role": "system", "content": "你是一位小说模仿的作家。"}, 
-        {"role": "user", "content": prompt}
+        {
+            "role": "system",
+            "content": (
+                "你是一位小说续写作家，用笔要像真人连载：语气有松有紧、句子有长有短，不要写成工整的范文。"
+                "若提示中含「领域圣经 DDD」或「本章规格 SDD」，设定与术语、本章目标仍须严格遵守，"
+                "但落实方式要走剧情与细节，不要用排比和总结句硬凑。"
+            ),
+        },
+        {"role": "user", "content": prompt},
     ]
 
     # ... (后续的 API 调用逻辑保持不变)
