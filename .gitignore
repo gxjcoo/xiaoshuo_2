@@ -11,4 +11,3 @@ pruned_context_archive.json
 venv/
 env/
 inkos
-.env
