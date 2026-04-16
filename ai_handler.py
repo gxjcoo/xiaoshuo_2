@@ -1,8 +1,8 @@
 import httpx
 import json
 import time
-import random
 import openai
+import re
 
 # 从 config 模块导入配置
 from config import (
@@ -19,6 +19,9 @@ from config import (
     STYLE_ANALYSIS_TEMPERATURE,
     CHAPTER_GENERATION_TEMPERATURE,
     MAX_CHAPTER_CONTENT_LENGTH,
+    VOLUME_CHAPTER_SIZE,
+    ENABLE_ANTI_AI_REWRITE,
+    ANTI_AI_MAX_ROUNDS,
 )
 
 def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, response_format=None):
@@ -150,6 +153,88 @@ def analyze_writing_style(text_sample):
         print(f"分析风格时发生错误: {e}")
         return "未能分析出风格，将使用默认风格。文本应当保持轻松幽默的基调，使用生动形象的比喻和适度的夸张手法。"
 
+
+def plan_chapter_with_ai(
+    current_context,
+    target_chapter_number,
+    previous_chapter_content=None,
+    chapter_spec_text="",
+    author_intent_text="",
+    current_focus_text="",
+):
+    """生成本章意图规划（短文本），用于约束正文生成焦点。"""
+    context_json = json.dumps(current_context, ensure_ascii=False, indent=2)
+    previous_tail = (previous_chapter_content or "")[-1200:]
+    prompt = (
+        f"你是小说章节规划师。请为第 {target_chapter_number} 章输出一份简洁可执行的写作意图。\n\n"
+        f"输出要求：\n"
+        f"1) 只输出纯文本，不要 Markdown 表格。\n"
+        f"2) 控制在 8 条以内，每条一句话。\n"
+        f"3) 至少包含：主线推进、角色变化、关键冲突、伏笔/回收点。\n"
+        f"4) 不得与既有设定冲突，不得新增未铺垫的大设定。\n\n"
+        f"【当前上下文】\n{context_json}\n\n"
+        f"【上一章结尾（可选）】\n{previous_tail if previous_tail else '无'}\n\n"
+        f"【本章规格（可选）】\n{chapter_spec_text if chapter_spec_text else '无'}\n"
+        f"【作者长期意图（可选）】\n{author_intent_text if author_intent_text else '无'}\n\n"
+        f"【近期焦点（可选，优先考虑）】\n{current_focus_text if current_focus_text else '无'}\n"
+    )
+    messages = [
+        {"role": "system", "content": "你擅长将长篇小说连载目标拆成可执行章节意图，强调连贯与可落地。"},
+        {"role": "user", "content": prompt},
+    ]
+    plan_text = call_deepseek_api(messages, CHAPTER_GENERATION_MODEL, max_tokens=800, temperature=0.3)
+    if not plan_text:
+        return ""
+    return plan_text.strip()
+
+
+def analyze_hooks_and_volume_update(current_context, chapter_content, chapter_number):
+    """提取本章 hooks 变更，并在分卷节点产出卷摘要。"""
+    context_slice = {
+        "pending_hooks": current_context.get("pending_hooks", [])[-20:],
+        "recent_chapter_summaries": current_context.get("recent_chapter_summaries", [])[-8:],
+        "last_generated_chapter": current_context.get("last_generated_chapter", 0),
+    }
+    volume_boundary = (chapter_number % VOLUME_CHAPTER_SIZE == 0)
+    prompt = (
+        "你是小说连载状态维护助手。请基于当前章节与既有未回收线索，输出 JSON。\n"
+        "字段要求：\n"
+        '1) "new_hooks": 本章新增且应保留到后文的线索数组（字符串）\n'
+        '2) "resolved_hooks": 本章明确回收/兑现的旧线索数组（字符串）\n'
+        '3) "volume_summary": 仅当到达分卷边界时输出该卷摘要，否则输出空字符串\n'
+        "规则：\n"
+        "- 只提取文本中明确存在的线索，不要脑补。\n"
+        "- 用短语表达线索，避免整句复述。\n"
+        f"- 当前章节号: {chapter_number}，分卷边界: {'是' if volume_boundary else '否'}。\n\n"
+        f"【当前状态片段】\n{json.dumps(context_slice, ensure_ascii=False, indent=2)}\n\n"
+        f"【本章内容】\n{chapter_content[:7000]}"
+    )
+    messages = [
+        {"role": "system", "content": "你擅长抽取连载线索状态并维护分卷摘要，输出必须是合法 JSON 对象。"},
+        {"role": "user", "content": prompt},
+    ]
+    result_text = call_deepseek_api(
+        messages,
+        CONTEXT_ANALYSIS_MODEL,
+        max_tokens=1200,
+        temperature=0.1,
+        response_format={"type": "json_object"},
+    )
+    if not result_text:
+        return {"new_hooks": [], "resolved_hooks": [], "volume_summary": ""}
+
+    try:
+        parsed = json.loads(result_text)
+        if not isinstance(parsed, dict):
+            return {"new_hooks": [], "resolved_hooks": [], "volume_summary": ""}
+        return {
+            "new_hooks": [x for x in parsed.get("new_hooks", []) if isinstance(x, str) and x.strip()],
+            "resolved_hooks": [x for x in parsed.get("resolved_hooks", []) if isinstance(x, str) and x.strip()],
+            "volume_summary": parsed.get("volume_summary", "").strip() if isinstance(parsed.get("volume_summary", ""), str) else "",
+        }
+    except Exception:
+        return {"new_hooks": [], "resolved_hooks": [], "volume_summary": ""}
+
 def generate_chapter_content(
     current_context,
     writing_style,
@@ -158,20 +243,40 @@ def generate_chapter_content(
     target_chapter_number=None,
     domain_text="",
     chapter_spec_text="",
+    chapter_plan_text="",
+    author_intent_text="",
+    current_focus_text="",
 ):
     """使用 AI 生成新的章节内容。
 
     domain_text: 领域圣经（DDD），静态设定与统一说法。
     chapter_spec_text: 本章规格（SDD），本章必须满足的写作契约。
     """
-    context_json = json.dumps(current_context, ensure_ascii=False, indent=2)
     if target_chapter_number is None:
         chapter_number = current_context.get("last_generated_chapter", 0) + 1
     else:
         chapter_number = target_chapter_number
 
     # 构建当前故事背景摘要
-    current_context_summary = f"当前故事背景：章节 {current_context.get('last_generated_chapter', 0)}，主角信息：{current_context.get('protagonist_info', {})}, 世界设定：{current_context.get('world_setting', {})}, 近期情节摘要：{current_context.get('recent_plot_summary', '无')}"
+    rolling_summaries = current_context.get("recent_chapter_summaries", [])
+    if isinstance(rolling_summaries, list) and rolling_summaries:
+        rolling_text = "\n".join(
+            f"- 第{item.get('chapter', '?')}章：{item.get('summary', '')}"
+            for item in rolling_summaries[-8:]
+            if isinstance(item, dict)
+        ).strip()
+    else:
+        rolling_text = ""
+
+    current_context_summary = (
+        f"当前故事背景：章节 {current_context.get('last_generated_chapter', 0)}，"
+        f"主角信息：{current_context.get('protagonist_info', {})}, "
+        f"世界设定：{current_context.get('world_setting', {})}, "
+        f"近期情节摘要：{current_context.get('recent_plot_summary', '无')}\n"
+        f"最近章节滚动记忆：\n{rolling_text if rolling_text else '无'}\n"
+        f"待回收线索：{current_context.get('pending_hooks', [])[-12:]}\n"
+        f"分卷摘要：{current_context.get('volume_summaries', [])[-3:]}"
+    )
 
     # 获取核心角色和道具
     core_characters = current_context.get('core_characters', [])
@@ -198,6 +303,9 @@ def generate_chapter_content(
         f"{current_context_summary}\n\n"
         f"{core_elements}\n\n"
         f"{ddd_sdd_block}"
+        f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}\n\n"
+        f"【近期焦点（优先于长期意图）】\n{current_focus_text if current_focus_text else '无'}\n\n"
+        f"【本章意图规划（必须落实）】\n{chapter_plan_text if chapter_plan_text else '无（请按上下文自主规划）'}\n\n"
         f"【核心创作要求】：\n"
         f"1. **风格平衡**：保持原文的风格，但同时注重主线推进。\n"
         f"2. **内容连贯**：严格维持剧情、角色性格和世界设定的连贯性。\n"
@@ -276,6 +384,79 @@ def generate_chapter_content(
         print(f"生成新章节内容时发生错误: {e}")
         return None
 
+
+def audit_and_revise_chapter_once(
+    chapter_content,
+    chapter_number,
+    writing_style,
+    chapter_plan_text="",
+    domain_text="",
+    chapter_spec_text="",
+    author_intent_text="",
+    current_focus_text="",
+):
+    """对章节做一次审校并在必要时自动修订一次。"""
+    if not chapter_content:
+        return chapter_content
+
+    audit_prompt = (
+        f"请审校第 {chapter_number} 章，按以下维度判定是否存在关键问题：\n"
+        f"- 连贯性（与已知上下文/前文）\n"
+        f"- 角色口吻与行为一致性\n"
+        f"- 是否偏离本章意图规划\n"
+        f"- 是否与领域/本章规格冲突\n"
+        f"- 是否出现明显 AI 腔（重复句式、空泛总结）\n\n"
+        f"若整体可用，仅输出：PASS\n"
+        f"若需要修订，输出：FAIL，然后给出不超过 6 条可执行修改点。\n\n"
+        f"【本章意图规划】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
+        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
+        f"【本章规格】\n{chapter_spec_text if chapter_spec_text else '无'}\n\n"
+        f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}\n\n"
+        f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}\n\n"
+        f"【章节正文】\n{chapter_content[:7000]}"
+    )
+    audit_messages = [
+        {"role": "system", "content": "你是小说质检编辑，结论应简洁、可执行。"},
+        {"role": "user", "content": audit_prompt},
+    ]
+    audit_result = call_deepseek_api(audit_messages, CHAPTER_GENERATION_MODEL, max_tokens=700, temperature=0.2)
+    if not audit_result:
+        return chapter_content
+
+    if audit_result.strip().upper().startswith("PASS"):
+        print("审校结果：PASS，本章无需自动修订。")
+        return chapter_content
+
+    revise_prompt = (
+        f"请根据审校意见对第 {chapter_number} 章进行一次完整修订。\n"
+        f"要求：\n"
+        f"1) 保留核心剧情与篇幅级别，不要大幅缩水。\n"
+        f"2) 优先修复审校指出的问题。\n"
+        f"3) 保持原文风格：\n{writing_style}\n"
+        f"4) 仅输出修订后的完整章节正文。\n\n"
+        f"【审校意见】\n{audit_result}\n\n"
+        f"【本章意图规划】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
+        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
+        f"【本章规格】\n{chapter_spec_text if chapter_spec_text else '无'}\n\n"
+        f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}\n\n"
+        f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}\n\n"
+        f"【待修订正文】\n{chapter_content}"
+    )
+    revise_messages = [
+        {"role": "system", "content": "你是小说修订编辑，保持剧情不跑偏并提升可读性。"},
+        {"role": "user", "content": revise_prompt},
+    ]
+    revised = call_deepseek_api(revise_messages, CHAPTER_GENERATION_MODEL, max_tokens=len(chapter_content) + 1200, temperature=0.35)
+    if not revised:
+        print("警告：自动修订失败，回退使用原始生成稿。")
+        return chapter_content
+
+    revised = revised.strip()
+    if revised and not revised.startswith("# "):
+        revised = f"# 第{chapter_number}章 修订稿\n\n{revised}"
+    print("审校结果：FAIL，已完成一次自动修订。")
+    return revised
+
 def analyze_context_with_ai(current_context, chapter_content):
     """使用 AI 分析章节内容以更新上下文的核心部分"""
     print("正在调用 AI 分析章节以更新上下文...")
@@ -351,3 +532,122 @@ def analyze_context_with_ai(current_context, chapter_content):
     except Exception as e:
         print(f"警告: 调用 AI 分析上下文时发生错误: {e}。跳过 AI 上下文更新。")
         return None
+
+
+def _basic_style_metrics(text):
+    """提取轻量风格指标，用于参考文与生成文差异对比。"""
+    if not text:
+        return {
+            "avg_sentence_len": 0.0,
+            "dialogue_ratio": 0.0,
+            "short_paragraph_ratio": 0.0,
+            "ellipsis_count": 0,
+            "rhetorical_count": 0,
+        }
+    sentences = [s for s in re.split(r"[。！？!?]", text) if s.strip()]
+    avg_sentence_len = (sum(len(s.strip()) for s in sentences) / len(sentences)) if sentences else 0.0
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    dialogue_lines = [ln for ln in lines if ("“" in ln and "”" in ln) or ('"' in ln)]
+    short_lines = [ln for ln in lines if len(ln.strip()) <= 16]
+    return {
+        "avg_sentence_len": round(avg_sentence_len, 2),
+        "dialogue_ratio": round((len(dialogue_lines) / len(lines)) if lines else 0.0, 3),
+        "short_paragraph_ratio": round((len(short_lines) / len(lines)) if lines else 0.0, 3),
+        "ellipsis_count": text.count("……"),
+        "rhetorical_count": text.count("？") + text.count("?"),
+    }
+
+
+def compare_reference_and_generated(reference_text, generated_text):
+    """对比原文与生成文的风格指标差异。"""
+    ref = _basic_style_metrics(reference_text)
+    gen = _basic_style_metrics(generated_text)
+    delta = {
+        "sentence_len_delta": round(gen["avg_sentence_len"] - ref["avg_sentence_len"], 2),
+        "dialogue_ratio_delta": round(gen["dialogue_ratio"] - ref["dialogue_ratio"], 3),
+        "short_paragraph_ratio_delta": round(gen["short_paragraph_ratio"] - ref["short_paragraph_ratio"], 3),
+        "ellipsis_delta": gen["ellipsis_count"] - ref["ellipsis_count"],
+        "rhetorical_delta": gen["rhetorical_count"] - ref["rhetorical_count"],
+    }
+    return {"reference": ref, "generated": gen, "delta": delta}
+
+
+def anti_ai_rewrite_with_reference(
+    reference_text,
+    chapter_content,
+    style_compare,
+    chapter_number,
+    writing_style,
+    chapter_plan_text="",
+    domain_text="",
+    chapter_spec_text="",
+):
+    """参考原文风格和差异，执行定向去模板化重写。"""
+    prompt = (
+        f"请对第 {chapter_number} 章做一次“保剧情、不改设定”的去模板化改写，以降低 AI 痕迹。\n"
+        f"硬要求：\n"
+        f"1) 不改变主事件、人物关系、世界设定、章节目标。\n"
+        f"2) 主要修表达层：句长错落、减少说明文收束、减少工整排比。\n"
+        f"3) 对话更口语化，允许打断、半句、停顿。\n"
+        f"4) 增加动作/感官细节，减少抽象总结。\n"
+        f"5) 仅输出修订后的完整章节。\n\n"
+        f"【原文风格参考片段】\n{(reference_text or '')[:2500]}\n\n"
+        f"【风格差异对比(JSON)】\n{json.dumps(style_compare, ensure_ascii=False, indent=2)}\n\n"
+        f"【既有风格分析】\n{writing_style}\n\n"
+        f"【本章意图规划】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
+        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
+        f"【本章规格】\n{chapter_spec_text if chapter_spec_text else '无'}\n\n"
+        f"【待改写章节】\n{chapter_content}"
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是资深网文改稿编辑。你的任务是保留剧情骨架，降低模板腔、说明腔和重复句式。"
+                "参考原文语感进行局部重写，不要写成教科书。"
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ]
+    rewritten = call_deepseek_api(
+        messages,
+        CHAPTER_GENERATION_MODEL,
+        max_tokens=len(chapter_content) + 1200,
+        temperature=0.55,
+    )
+    if not rewritten:
+        return chapter_content
+    rewritten = rewritten.strip()
+    if rewritten and not rewritten.startswith("# "):
+        rewritten = f"# 第{chapter_number}章 修订稿\n\n{rewritten}"
+    return rewritten
+
+
+def reduce_ai_flavor_with_loop(
+    reference_text,
+    chapter_content,
+    chapter_number,
+    writing_style,
+    chapter_plan_text="",
+    domain_text="",
+    chapter_spec_text="",
+):
+    """按“对比->重写”循环做最多 N 轮风格校正。"""
+    if not ENABLE_ANTI_AI_REWRITE or not chapter_content:
+        return chapter_content
+    current = chapter_content
+    rounds = max(1, int(ANTI_AI_MAX_ROUNDS))
+    for i in range(rounds):
+        style_compare = compare_reference_and_generated(reference_text, current)
+        current = anti_ai_rewrite_with_reference(
+            reference_text,
+            current,
+            style_compare,
+            chapter_number,
+            writing_style,
+            chapter_plan_text=chapter_plan_text,
+            domain_text=domain_text,
+            chapter_spec_text=chapter_spec_text,
+        )
+        print(f"去AI味重写已完成第 {i + 1}/{rounds} 轮。")
+    return current

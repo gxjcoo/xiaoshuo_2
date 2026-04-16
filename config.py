@@ -20,12 +20,21 @@ DEFAULT_OUTPUT_DIR = 'output_chapters' # 默认生成章节输出目录
 # DDD / SDD：静态领域与章节规格目录（相对项目工作目录）
 STORY_DOMAIN_DIR = 'story_domain'
 CHAPTER_SPECS_DIR = 'chapter_specs'
+RUNTIME_DIR = 'runtime'
+AUTHOR_INTENT_FILE = 'author_intent.md'
+CURRENT_FOCUS_FILE = 'current_focus.md'
 # 注入提示词时的长度上限（字符），避免超出模型上下文
 MAX_DOMAIN_PROMPT_CHARS = 8000
 MAX_CHAPTER_SPEC_CHARS = 6000
+MAX_AUTHOR_INTENT_CHARS = 3000
+MAX_CURRENT_FOCUS_CHARS = 2000
 
 # --- 上下文管理配置 ---
-MAX_CONTEXT_BYTES = 3000 # 上下文文件目标最大字节数
+# 长连载增强：提高上下文目标上限，减少中后期被动裁剪导致的遗忘
+MAX_CONTEXT_BYTES = 12000 # 上下文文件目标最大字节数
+VOLUME_CHAPTER_SIZE = 20
+MAX_PENDING_HOOKS = 40
+MAX_VOLUME_SUMMARIES = 12
 
 # 默认故事上下文结构
 DEFAULT_CONTEXT = {
@@ -42,7 +51,13 @@ DEFAULT_CONTEXT = {
     },
     "core_characters": [],  # 新增：核心配角列表
     "core_items": [],       # 新增：核心道具列表
-    "recent_plot_summary": ""
+    "recent_plot_summary": "",
+    # 长连载增强：保留最近多章的结尾摘要，作为滚动记忆
+    "recent_chapter_summaries": [],
+    # 长连载增强：未回收线索池（伏笔/承诺/悬念）
+    "pending_hooks": [],
+    # 长连载增强：分卷摘要
+    "volume_summaries": []
 }
 
 # --- AI 相关配置 ---
@@ -68,3 +83,19 @@ STYLE_ANALYSIS_TEMPERATURE = 0.05
 # --- 其他配置 ---
 # 处理章节内容时传递给 AI 的最大字符数，防止输入过长
 MAX_CHAPTER_CONTENT_LENGTH = 6000
+
+# --- 降低 AI 味道配置 ---
+ENABLE_ANTI_AI_REWRITE = True
+ANTI_AI_MAX_ROUNDS = 2
+
+# --- 文件增长治理（参考 inkos 的保留窗口/压缩思路） ---
+# runtime 目录仅保留最近 N 章的工件（intent/context/trace）
+MAX_RUNTIME_CHAPTER_ARTIFACTS = 40
+# 单个 runtime intent 文件最大字符（超出截断）
+MAX_RUNTIME_INTENT_CHARS = 4000
+# 单个 runtime context 快照最大字节（超出降载写入）
+MAX_RUNTIME_CONTEXT_SNAPSHOT_BYTES = 12000
+# pruned_context_archive 的历史保留上限
+MAX_PRUNED_ARCHIVE_ABILITIES = 200
+MAX_PRUNED_ARCHIVE_ELEMENTS = 200
+MAX_PRUNED_ARCHIVE_RELATIONSHIPS = 200

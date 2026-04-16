@@ -6,6 +6,10 @@ from config import (
     CHAPTER_SPECS_DIR,
     MAX_DOMAIN_PROMPT_CHARS,
     MAX_CHAPTER_SPEC_CHARS,
+    AUTHOR_INTENT_FILE,
+    CURRENT_FOCUS_FILE,
+    MAX_AUTHOR_INTENT_CHARS,
+    MAX_CURRENT_FOCUS_CHARS,
 )
 
 
@@ -60,3 +64,29 @@ def load_chapter_spec_text(chapter_number, specs_dir=None):
     if len(text) > MAX_CHAPTER_SPEC_CHARS:
         text = text[:MAX_CHAPTER_SPEC_CHARS] + "\n\n…（章节规格已按长度截断）"
     return text
+
+
+def _load_optional_text_file(path, max_chars, label):
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read().strip()
+    except OSError as e:
+        print(f"警告: 无法读取 {label} 文件 {path}: {e}")
+        return ""
+    if len(text) > max_chars:
+        text = text[:max_chars] + f"\n\n…（{label} 已按长度截断）"
+    return text
+
+
+def load_author_intent_text(path=None):
+    """读取作者长期意图文档 author_intent.md。"""
+    target = path or AUTHOR_INTENT_FILE
+    return _load_optional_text_file(target, MAX_AUTHOR_INTENT_CHARS, "author_intent")
+
+
+def load_current_focus_text(path=None):
+    """读取近 1-3 章焦点文档 current_focus.md。"""
+    target = path or CURRENT_FOCUS_FILE
+    return _load_optional_text_file(target, MAX_CURRENT_FOCUS_CHARS, "current_focus")

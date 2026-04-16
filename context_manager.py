@@ -1,14 +1,89 @@
 import json
 import os
-import datetime
 import copy
 
 # 从 config 模块导入相关常量
-from config import CONTEXT_FILE, PRUNED_ARCHIVE_FILE, MAX_CONTEXT_BYTES, DEFAULT_CONTEXT
-from ai_handler import analyze_context_with_ai
+from config import (
+    CONTEXT_FILE,
+    PRUNED_ARCHIVE_FILE,
+    MAX_CONTEXT_BYTES,
+    DEFAULT_CONTEXT,
+    MAX_PENDING_HOOKS,
+    MAX_VOLUME_SUMMARIES,
+    MAX_PRUNED_ARCHIVE_ABILITIES,
+    MAX_PRUNED_ARCHIVE_ELEMENTS,
+    MAX_PRUNED_ARCHIVE_RELATIONSHIPS,
+)
+from ai_handler import analyze_context_with_ai, analyze_hooks_and_volume_update
 
 # 全局变量，存储当前加载的故事上下文
 story_context = {}
+
+
+def _cap_pruned_archive_size(archive):
+    """限制 pruned archive 体量，防止长期运行后无限增长。"""
+    try:
+        abilities = archive.get("protagonist_info", {}).get("key_items_abilities", [])
+        if isinstance(abilities, list) and len(abilities) > MAX_PRUNED_ARCHIVE_ABILITIES:
+            archive["protagonist_info"]["key_items_abilities"] = abilities[-MAX_PRUNED_ARCHIVE_ABILITIES:]
+
+        elements = archive.get("world_setting", {}).get("key_elements", [])
+        if isinstance(elements, list) and len(elements) > MAX_PRUNED_ARCHIVE_ELEMENTS:
+            archive["world_setting"]["key_elements"] = elements[-MAX_PRUNED_ARCHIVE_ELEMENTS:]
+
+        relationships = archive.get("protagonist_info", {}).get("key_relationships", {})
+        if isinstance(relationships, dict) and len(relationships) > MAX_PRUNED_ARCHIVE_RELATIONSHIPS:
+            keys = list(relationships.keys())[-MAX_PRUNED_ARCHIVE_RELATIONSHIPS:]
+            archive["protagonist_info"]["key_relationships"] = {k: relationships[k] for k in keys}
+    except Exception as e:
+        print(f"警告：限制 pruned archive 体量时出错: {e}")
+    return archive
+
+
+def _load_existing_archive():
+    """加载已有归档，异常时回退为空结构。"""
+    existing_archive = {
+        "protagonist_info": {"key_items_abilities": [], "key_relationships": {}},
+        "world_setting": {"key_elements": []},
+    }
+    if not os.path.exists(PRUNED_ARCHIVE_FILE):
+        return existing_archive
+    try:
+        with open(PRUNED_ARCHIVE_FILE, 'r', encoding='utf-8') as af:
+            loaded_archive = json.load(af)
+        if isinstance(loaded_archive, dict) and "protagonist_info" in loaded_archive and "world_setting" in loaded_archive:
+            return loaded_archive
+        print(f"警告：存档文件 {PRUNED_ARCHIVE_FILE} 格式不符合预期，将使用空结构重新创建。")
+        return existing_archive
+    except json.JSONDecodeError:
+        print(f"警告：存档文件 {PRUNED_ARCHIVE_FILE} 格式错误，将使用空结构重新创建。")
+        return existing_archive
+    except Exception as e:
+        print(f"警告：读取存档文件 {PRUNED_ARCHIVE_FILE} 失败: {e}")
+        return existing_archive
+
+
+def _merge_removed_items_to_archive(removed_items_archive, total_removed_count):
+    """将本轮被修剪条目合并入归档并写回。"""
+    if total_removed_count <= 0:
+        return
+    try:
+        existing_archive = _load_existing_archive()
+        existing_archive["protagonist_info"].setdefault("key_items_abilities", []).extend(
+            removed_items_archive["protagonist_info"]["key_items_abilities"]
+        )
+        existing_archive["protagonist_info"].setdefault("key_relationships", {}).update(
+            removed_items_archive["protagonist_info"]["key_relationships"]
+        )
+        existing_archive["world_setting"].setdefault("key_elements", []).extend(
+            removed_items_archive["world_setting"]["key_elements"]
+        )
+        existing_archive = _cap_pruned_archive_size(existing_archive)
+        with open(PRUNED_ARCHIVE_FILE, 'w', encoding='utf-8') as af:
+            json.dump(existing_archive, af, ensure_ascii=False, indent=4)
+        print(f"已将被删除的 {total_removed_count} 个条目信息合并到存档文件 {PRUNED_ARCHIVE_FILE}")
+    except Exception as archive_e:
+        print(f"写入或合并存档文件 {PRUNED_ARCHIVE_FILE} 时出错: {archive_e}")
 
 def load_story_context():
     """加载故事上下文"""
@@ -112,39 +187,7 @@ def save_story_context():
         # --- 如果有条目被删除，则更新存档文件 --- 
         if total_removed_count > 0:
             print(f"上下文大小超过 {MAX_CONTEXT_BYTES} 字节，已同步修剪 {total_removed_count} 个条目。")
-            try:
-                # 加载现有存档或初始化
-                existing_archive = {"protagonist_info": {"key_items_abilities": [], "key_relationships": {}}, "world_setting": {"key_elements": []}}
-                if os.path.exists(PRUNED_ARCHIVE_FILE):
-                    with open(PRUNED_ARCHIVE_FILE, 'r', encoding='utf-8') as af:
-                        try:
-                            loaded_archive = json.load(af)
-                            # 简单验证结构，不是列表，且包含顶级键
-                            if isinstance(loaded_archive, dict) and "protagonist_info" in loaded_archive and "world_setting" in loaded_archive:
-                                existing_archive = loaded_archive
-                            else:
-                                print(f"警告：存档文件 {PRUNED_ARCHIVE_FILE} 格式不符合预期，将使用空结构重新创建。")
-                        except json.JSONDecodeError:
-                            print(f"警告：存档文件 {PRUNED_ARCHIVE_FILE} 格式错误，将使用空结构重新创建。")
-                
-                # 合并本次删除的条目到现有存档
-                # 合并 abilities
-                existing_archive["protagonist_info"].setdefault("key_items_abilities", []).extend(
-                    removed_items_archive["protagonist_info"]["key_items_abilities"])
-                # 合并 relationships (更新字典)
-                existing_archive["protagonist_info"].setdefault("key_relationships", {}).update(
-                    removed_items_archive["protagonist_info"]["key_relationships"])
-                # 合并 elements
-                existing_archive["world_setting"].setdefault("key_elements", []).extend(
-                    removed_items_archive["world_setting"]["key_elements"])
-
-                # 写回存档文件
-                with open(PRUNED_ARCHIVE_FILE, 'w', encoding='utf-8') as af:
-                    json.dump(existing_archive, af, ensure_ascii=False, indent=4)
-                print(f"已将被删除的 {total_removed_count} 个条目信息合并到存档文件 {PRUNED_ARCHIVE_FILE}")
-
-            except Exception as archive_e:
-                print(f"写入或合并存档文件 {PRUNED_ARCHIVE_FILE} 时出错: {archive_e}")
+            _merge_removed_items_to_archive(removed_items_archive, total_removed_count)
             # --- 存档逻辑结束 ---
 
         # 保存（可能已修剪的）上下文到主文件
@@ -242,42 +285,7 @@ def simplify_context_items(max_items=15, max_elements=25):
     # 如果有内容被移除，则更新存档文件
     if total_removed_count > 0:
         print(f"共有 {total_removed_count} 个项目被简化移除，正在更新存档...")
-        try:
-            # 加载现有存档或初始化
-            existing_archive = {
-                "protagonist_info": {"key_items_abilities": [], "key_relationships": {}}, 
-                "world_setting": {"key_elements": []}
-            }
-            if os.path.exists(PRUNED_ARCHIVE_FILE):
-                with open(PRUNED_ARCHIVE_FILE, 'r', encoding='utf-8') as af:
-                    try:
-                        loaded_archive = json.load(af)
-                        # 简单验证结构，不是列表，且包含顶级键
-                        if isinstance(loaded_archive, dict) and "protagonist_info" in loaded_archive and "world_setting" in loaded_archive:
-                            existing_archive = loaded_archive
-                        else:
-                            print(f"警告：存档文件 {PRUNED_ARCHIVE_FILE} 格式不符合预期，将使用空结构重新创建。")
-                    except json.JSONDecodeError:
-                        print(f"警告：存档文件 {PRUNED_ARCHIVE_FILE} 格式错误，将使用空结构重新创建。")
-            
-            # 合并本次删除的条目到现有存档
-            # 合并 abilities
-            existing_archive["protagonist_info"].setdefault("key_items_abilities", []).extend(
-                removed_items_archive["protagonist_info"]["key_items_abilities"])
-            # 合并 relationships (更新字典)
-            existing_archive["protagonist_info"].setdefault("key_relationships", {}).update(
-                removed_items_archive["protagonist_info"]["key_relationships"])
-            # 合并 elements
-            existing_archive["world_setting"].setdefault("key_elements", []).extend(
-                removed_items_archive["world_setting"]["key_elements"])
-
-            # 写回存档文件
-            with open(PRUNED_ARCHIVE_FILE, 'w', encoding='utf-8') as af:
-                json.dump(existing_archive, af, ensure_ascii=False, indent=4)
-            print(f"已将被删除的 {total_removed_count} 个条目信息合并到存档文件 {PRUNED_ARCHIVE_FILE}")
-
-        except Exception as archive_e:
-            print(f"写入或合并存档文件 {PRUNED_ARCHIVE_FILE} 时出错: {archive_e}")
+        _merge_removed_items_to_archive(removed_items_archive, total_removed_count)
 
 
 def update_story_context_after_chapter(chapter_number, new_chapter_content):
@@ -293,8 +301,20 @@ def update_story_context_after_chapter(chapter_number, new_chapter_content):
     non_empty_lines = [line for line in lines if line.strip()]
     # 获取最后3行非空内容
     summary_lines = non_empty_lines[-3:] if len(non_empty_lines) >= 3 else non_empty_lines
-    story_context["recent_plot_summary"] = "\n".join(summary_lines)
+    chapter_tail_summary = "\n".join(summary_lines)
+    story_context["recent_plot_summary"] = chapter_tail_summary
     print(f"已提取章节结尾作为摘要: {summary_lines}")
+
+    # 长连载增强：维护最近多章滚动摘要，提升跨章记忆保真度
+    rolling = story_context.setdefault("recent_chapter_summaries", [])
+    if not isinstance(rolling, list):
+        rolling = []
+    rolling.append({
+        "chapter": chapter_number,
+        "summary": chapter_tail_summary
+    })
+    # 仅保留最近 12 章，控制上下文膨胀
+    story_context["recent_chapter_summaries"] = rolling[-12:]
     
     # Call AI analysis internally
     print("准备调用 AI 分析上下文...")
@@ -332,6 +352,48 @@ def update_story_context_after_chapter(chapter_number, new_chapter_content):
 
     else:
         print("本次 AI 上下文分析未产生有效更新。详细上下文信息可能未更新。")
+
+    # 长连载增强：维护未回收线索池与分卷摘要
+    hook_update = analyze_hooks_and_volume_update(
+        copy.deepcopy(story_context),
+        new_chapter_content,
+        chapter_number,
+    )
+    pending_hooks = story_context.setdefault("pending_hooks", [])
+    if not isinstance(pending_hooks, list):
+        pending_hooks = []
+
+    # 新增 hooks 去重追加
+    for hook in hook_update.get("new_hooks", []):
+        if hook not in pending_hooks:
+            pending_hooks.append(hook)
+
+    # 已回收 hooks 从池中移除（模糊包含匹配）
+    resolved_hooks = hook_update.get("resolved_hooks", [])
+    if resolved_hooks:
+        pruned = []
+        for old_hook in pending_hooks:
+            is_resolved = any(
+                (r in old_hook) or (old_hook in r)
+                for r in resolved_hooks
+                if isinstance(r, str) and r.strip()
+            )
+            if not is_resolved:
+                pruned.append(old_hook)
+        pending_hooks = pruned
+
+    story_context["pending_hooks"] = pending_hooks[-MAX_PENDING_HOOKS:]
+
+    volume_summary = hook_update.get("volume_summary", "").strip()
+    if volume_summary:
+        volume_summaries = story_context.setdefault("volume_summaries", [])
+        if not isinstance(volume_summaries, list):
+            volume_summaries = []
+        volume_summaries.append({
+            "end_chapter": chapter_number,
+            "summary": volume_summary
+        })
+        story_context["volume_summaries"] = volume_summaries[-MAX_VOLUME_SUMMARIES:]
     
     # 自动检测并添加核心配角与道具
     print("开始自动检测核心配角和道具...")
