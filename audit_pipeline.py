@@ -3,6 +3,7 @@ import re
 
 from config import ENABLE_ANTI_AI_REWRITE, ANTI_AI_MAX_ROUNDS, AUDIT_NEAR_PASS_DELTA
 from ai_handler import call_deepseek_api
+from ai_trace_rules import analyze_ai_trace
 
 
 def _basic_style_metrics(text):
@@ -51,9 +52,22 @@ def anti_ai_rewrite_with_reference(
     writing_style,
     chapter_plan_text="",
     domain_text="",
+    ai_trace_findings=None,
     model="deepseek-chat",
 ):
     """参考原文风格和差异，执行定向去模板化重写。"""
+    findings_text = ""
+    if ai_trace_findings:
+        lines = []
+        for item in ai_trace_findings[:10]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- [{item.get('rule', 'unknown')}] {item.get('description', '')}；修复建议：{item.get('suggestion', '')}"
+            )
+        if lines:
+            findings_text = "【规则命中（必须优先修复）】\n" + "\n".join(lines) + "\n\n"
+
     prompt = (
         f"请对第 {chapter_number} 章做一次“保剧情、不改设定”的去模板化改写，以降低 AI 痕迹。\n"
         f"硬要求：\n"
@@ -61,7 +75,9 @@ def anti_ai_rewrite_with_reference(
         f"2) 主要修表达层：句长错落、减少说明文收束、减少工整排比。\n"
         f"3) 对话更口语化，允许打断、半句、停顿。\n"
         f"4) 增加动作/感官细节，减少抽象总结。\n"
-        f"5) 仅输出修订后的完整章节。\n\n"
+        f"5) 必须优先修复【规则命中】中的问题，逐项消除。\n"
+        f"6) 仅输出修订后的完整章节。\n\n"
+        f"{findings_text}"
         f"【原文风格参考片段】\n{(reference_text or '')[:2500]}\n\n"
         f"【风格差异对比(JSON)】\n{json.dumps(style_compare, ensure_ascii=False, indent=2)}\n\n"
         f"【既有风格分析】\n{writing_style}\n\n"
@@ -97,6 +113,7 @@ def evaluate_chapter_with_rules(
     chapter_content,
     chapter_number,
     rules,
+    recent_chapter_texts=None,
     chapter_plan_text="",
     domain_text="",
     author_intent_text="",
@@ -134,13 +151,48 @@ def evaluate_chapter_with_rules(
         return {"total_score": 0, "pass": False, "issues": ["审计失败"], "suggestions": []}
     try:
         parsed = json.loads(raw)
-        return {
+        result = {
             "total_score": int(parsed.get("total_score", 0)),
             "pass": bool(parsed.get("pass", False)),
             "dimension_scores": parsed.get("dimension_scores", {}),
             "issues": parsed.get("issues", []),
             "suggestions": parsed.get("suggestions", []),
+            "ai_trace_rule_issues": [],
         }
+        # 叠加确定性 ai_trace 规则分析，避免只靠模型主观判断
+        deterministic = analyze_ai_trace(chapter_content, recent_chapter_texts=recent_chapter_texts or [])
+        penalty = int(deterministic.get("score_penalty", 0))
+        rule_issues = deterministic.get("issues", []) if isinstance(deterministic.get("issues", []), list) else []
+        result["ai_trace_rule_issues"] = rule_issues
+        if penalty > 0:
+            result["total_score"] = max(0, int(result.get("total_score", 0)) - penalty)
+            dims = result.get("dimension_scores", {})
+            if not isinstance(dims, dict):
+                dims = {}
+            ai_trace_raw = dims.get("ai_trace", 0)
+            try:
+                ai_trace_score = int(ai_trace_raw)
+            except Exception:
+                ai_trace_score = 0
+            dims["ai_trace"] = max(0, ai_trace_score - penalty)
+            result["dimension_scores"] = dims
+
+            extra_issue_lines = [
+                f"[{item.get('rule', 'ai_trace')}] {item.get('description', '')}"
+                for item in rule_issues if isinstance(item, dict)
+            ]
+            extra_suggestion_lines = [
+                item.get("suggestion", "")
+                for item in rule_issues if isinstance(item, dict) and item.get("suggestion")
+            ]
+            result["issues"] = (result.get("issues", []) or []) + extra_issue_lines
+            result["suggestions"] = (result.get("suggestions", []) or []) + extra_suggestion_lines
+
+        # 规则命中严重时强制不通过，避免“分数侥幸过线”
+        severe_hits = len([i for i in rule_issues if isinstance(i, dict) and i.get("severity") == "warning"])
+        if severe_hits >= 3:
+            result["pass"] = False
+        return result
     except Exception:
         return {"total_score": 0, "pass": False, "issues": ["审计结果解析失败"], "suggestions": []}
 
@@ -154,16 +206,20 @@ def revise_chapter_by_audit_feedback(
     domain_text="",
     author_intent_text="",
     current_focus_text="",
+    focus_dimensions=None,
     model="deepseek-chat",
 ):
     """基于审计反馈做一次针对性修订。"""
     feedback_json = json.dumps(audit_result, ensure_ascii=False, indent=2)
+    focus_dimensions = focus_dimensions or []
+    focus_text = "、".join(str(x).strip() for x in focus_dimensions if str(x).strip()) or "issues 中最高优先级问题"
     prompt = (
         f"请根据审计结果修订第 {chapter_number} 章，仅修复问题，不改变核心剧情走向。\n"
         f"要求：\n"
-        f"1) 优先解决 issues 和 suggestions。\n"
+        f"1) 本轮只优先修复这些维度：{focus_text}。\n"
         f"2) 保持原文风格与角色设定。\n"
-        f"3) 输出完整修订后正文。\n\n"
+        f"3) 除上述维度外，其他内容仅做最小改动，禁止大改剧情结构。\n"
+        f"4) 输出完整修订后正文。\n\n"
         f"【审计结果】\n{feedback_json}\n\n"
         f"【风格分析】\n{writing_style}\n\n"
         f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
@@ -190,6 +246,7 @@ def audit_and_revise_until_pass(
     chapter_number,
     writing_style,
     rules,
+    recent_chapter_texts=None,
     reference_text="",
     chapter_plan_text="",
     domain_text="",
@@ -203,16 +260,30 @@ def audit_and_revise_until_pass(
         return {"passed": False, "content": chapter_content, "last_audit": {"total_score": 0}}
 
     pass_threshold = int(rules.get("pass_threshold", 85))
+    ai_trace_hard_threshold = int(rules.get("ai_trace_hard_threshold", 80))
     max_rounds = int(rules.get("max_revise_rounds", ANTI_AI_MAX_ROUNDS))
     max_rounds = max(1, max_rounds)
     current = chapter_content
     last_audit = {"total_score": 0, "pass": False, "issues": ["未审计"]}
+
+    def _pick_focus_dimensions(dimension_scores):
+        if not isinstance(dimension_scores, dict) or not dimension_scores:
+            return []
+        normalized = []
+        for dim_id, dim_score in dimension_scores.items():
+            try:
+                normalized.append((str(dim_id), int(dim_score)))
+            except Exception:
+                continue
+        normalized.sort(key=lambda x: x[1])
+        return [dim for dim, _ in normalized[:2]]
 
     for round_idx in range(max_rounds + 1):
         last_audit = evaluate_chapter_with_rules(
             current,
             chapter_number,
             rules,
+            recent_chapter_texts=recent_chapter_texts,
             chapter_plan_text=chapter_plan_text,
             domain_text=domain_text,
             author_intent_text=author_intent_text,
@@ -220,12 +291,22 @@ def audit_and_revise_until_pass(
             model=analysis_model,
         )
         score = int(last_audit.get("total_score", 0))
-        passed = bool(last_audit.get("pass", False)) and score >= pass_threshold
-        print(f"规则审计得分: {score} (阈值: {pass_threshold})，轮次: {round_idx}/{max_rounds}")
+        try:
+            ai_trace_score = int((last_audit.get("dimension_scores", {}) or {}).get("ai_trace", 0))
+        except Exception:
+            ai_trace_score = 0
+        passed = bool(last_audit.get("pass", False)) and score >= pass_threshold and ai_trace_score >= ai_trace_hard_threshold
+        print(
+            f"规则审计得分: {score} (总阈值: {pass_threshold}) / ai_trace: {ai_trace_score} (硬阈值: {ai_trace_hard_threshold})，轮次: {round_idx}/{max_rounds}"
+        )
         if passed:
             return {"passed": True, "content": current, "last_audit": last_audit}
         # 最后一轮仅差少量分数时，允许近阈值放行，避免长时间重跑后仍完全不落盘
-        if round_idx == max_rounds and score >= max(0, pass_threshold - AUDIT_NEAR_PASS_DELTA):
+        if (
+            round_idx == max_rounds
+            and score >= max(0, pass_threshold - AUDIT_NEAR_PASS_DELTA)
+            and ai_trace_score >= ai_trace_hard_threshold
+        ):
             print(
                 f"规则审计近阈值放行: {score} (阈值 {pass_threshold}, 容差 {AUDIT_NEAR_PASS_DELTA})"
             )
@@ -235,11 +316,6 @@ def audit_and_revise_until_pass(
 
         # 将去 AI 味作为 ai_trace 维度的专属修订策略并入唯一审计循环
         if ENABLE_ANTI_AI_REWRITE:
-            ai_trace_score = 0
-            try:
-                ai_trace_score = int((last_audit.get("dimension_scores", {}) or {}).get("ai_trace", 0))
-            except Exception:
-                ai_trace_score = 0
             if ai_trace_score < pass_threshold and reference_text:
                 style_compare = compare_reference_and_generated(reference_text, current)
                 current = anti_ai_rewrite_with_reference(
@@ -250,6 +326,7 @@ def audit_and_revise_until_pass(
                     writing_style,
                     chapter_plan_text=chapter_plan_text,
                     domain_text=domain_text,
+                    ai_trace_findings=last_audit.get("ai_trace_rule_issues", []),
                     model=generation_model,
                 )
                 print("ai_trace 维度未达标，已执行一次参考文去模板化修订。")
@@ -263,6 +340,7 @@ def audit_and_revise_until_pass(
             domain_text=domain_text,
             author_intent_text=author_intent_text,
             current_focus_text=current_focus_text,
+            focus_dimensions=_pick_focus_dimensions(last_audit.get("dimension_scores", {})),
             model=generation_model,
         )
     return {"passed": False, "content": current, "last_audit": last_audit}

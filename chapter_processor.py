@@ -93,6 +93,20 @@ def write_chapter_file(filepath, content):
         print(f"写入文件 {filepath} 时出错: {e}")
 
 
+def load_recent_output_chapters(output_dir, chapter_number, window=5):
+    """读取最近 window 章已生成正文，用于跨章重复/同构检测。"""
+    texts = []
+    start = max(1, chapter_number - window)
+    for ch in range(start, chapter_number):
+        p = os.path.join(output_dir, f"{ch}.md")
+        if not os.path.isfile(p):
+            continue
+        content = read_chapter_file(p)
+        if content and content.strip():
+            texts.append(content)
+    return texts
+
+
 def write_runtime_artifacts(chapter_number, chapter_plan_text, current_context, trace_data):
     """写入 runtime 工件，便于排查“为什么这样写”。"""
     try:
@@ -163,6 +177,7 @@ def load_audit_rules():
     """加载审计规则，缺失或异常时回退默认规则。"""
     default_rules = {
         "pass_threshold": 85,
+        "ai_trace_hard_threshold": 80,
         "max_revise_rounds": AUDIT_MAX_REVISE_ROUNDS,
         "dimensions": [
             {"id": "continuity", "name": "连贯性", "weight": 0.3, "requirements": ["剧情衔接自然", "设定不冲突"]},
@@ -179,6 +194,7 @@ def load_audit_rules():
         if not isinstance(loaded, dict):
             return default_rules
         loaded.setdefault("pass_threshold", default_rules["pass_threshold"])
+        loaded.setdefault("ai_trace_hard_threshold", default_rules["ai_trace_hard_threshold"])
         loaded.setdefault("max_revise_rounds", default_rules["max_revise_rounds"])
         loaded.setdefault("dimensions", default_rules["dimensions"])
         return loaded
@@ -350,11 +366,13 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
         return False # 表示处理失败
 
     # 5. 按规则审计并循环修订（含 ai_trace 专属去模板化策略），达标才允许落盘
+    recent_chapter_texts = load_recent_output_chapters(output_dir, chapter_number, window=5)
     audit_gate_result = audit_and_revise_until_pass(
         new_chapter_content,
         chapter_number,
         writing_style,
         audit_rules,
+        recent_chapter_texts=recent_chapter_texts,
         reference_text=original_content,
         chapter_plan_text=chapter_plan_text,
         domain_text=domain_text,
