@@ -4,7 +4,7 @@ import json
 # 从其他模块导入所需函数和常量
 from config import DEFAULT_OUTPUT_DIR, CHAPTER_SPECS_DIR
 from context_manager import get_current_context, update_story_context_after_chapter
-from ai_handler import analyze_writing_style, generate_chapter_content, analyze_context_with_ai
+from ai_handler import analyze_writing_style, generate_chapter_content
 from domain_spec_loader import load_story_domain_text, load_chapter_spec_text
 
 REFERENCE_STUB_TEMPLATE = """# 第{chapter}章 参考稿占位
@@ -154,12 +154,8 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
     # 5. 写入新章节文件
     write_chapter_file(output_filepath, new_chapter_content)
 
-    # 6. 使用 AI 分析新章节内容以更新上下文
-    ai_analysis_result = analyze_context_with_ai(current_context, new_chapter_content)
-
-    # 7. 更新并保存故事上下文
-    # 注意：即使 AI 分析失败 (ai_analysis_result is None)，我们仍然需要更新章节号和摘要
-    # 传递完整的章节内容，让update_story_context_after_chapter函数提取正确的结尾摘要
+    # 6. 更新并保存故事上下文（内部会完成 AI 上下文分析）
+    # 即使 AI 分析失败，也仍会更新章节号与章节结尾摘要
     update_story_context_after_chapter(chapter_number, new_chapter_content)
 
     print(f"章节 {chapter_number} 处理完成。")

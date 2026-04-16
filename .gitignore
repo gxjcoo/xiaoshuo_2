@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Context/runtime artifacts
+story_context.json
+pruned_context_archive.json
+
+# Virtual environments
+.venv/
+venv/
+env/

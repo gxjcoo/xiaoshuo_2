@@ -627,11 +627,11 @@ def detect_potential_core_items(chapter_content):
             max_tokens=200
         )
         
-        if not response or "content" not in response:
+        if not response:
             print("AI分析未返回有效结果")
             return []
-            
-        content = response["content"].strip()
+
+        content = response.strip()
         
         # 尝试解析JSON响应
         try:
