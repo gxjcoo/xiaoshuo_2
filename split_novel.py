@@ -15,13 +15,12 @@ def sanitize_filename(filename):
         sanitized = "invalid_title"
     return sanitized
 
-def save_chapter(output_dir, chapter_title, chapter_content):
+def save_chapter(output_dir, chapter_title, chapter_content, chapter_index):
     """Saves a chapter to a markdown file."""
     if not chapter_title or not chapter_content:
         return False
 
-    safe_title = sanitize_filename(chapter_title)
-    filename = os.path.join(output_dir, f"{safe_title}.md")
+    filename = os.path.join(output_dir, f"{chapter_index}.md")
     try:
         with open(filename, 'w', encoding='utf-8') as outfile:
             outfile.write("".join(chapter_content))
@@ -43,7 +42,7 @@ def split_novel_to_chapters(input_filepath, output_dir):
     # Matches chapter headings both at line start and inline in paragraph text.
     # Example inline case: "...惊恐。第5章 这游戏实在是太真实了"
     chapter_pattern = re.compile(
-        r"第\s*[零〇一二三四五六七八九十百千万两\d]+\s*[章节回]\s*[^\n\r]*"
+        r"第\s*[零〇一二三四五六七八九十百千万两\d]+\s*[章节回](?:\s+|[:：]\s*)[^\n\r]*"
     )
 
     # Create the output directory if it doesn't exist
@@ -72,7 +71,8 @@ def split_novel_to_chapters(input_filepath, output_dir):
                         current_chapter_content.append(prefix)
 
                     # Save previous chapter before switching to a new one.
-                    if save_chapter(output_dir, current_chapter_title, current_chapter_content):
+                    next_index = chapter_count + 1
+                    if save_chapter(output_dir, current_chapter_title, current_chapter_content, next_index):
                         chapter_count += 1
 
                     current_chapter_title = matched_title
@@ -90,7 +90,8 @@ def split_novel_to_chapters(input_filepath, output_dir):
                     current_chapter_content.append(line)
 
             # Write the last chapter after the loop finishes
-            if save_chapter(output_dir, current_chapter_title, current_chapter_content):
+            next_index = chapter_count + 1
+            if save_chapter(output_dir, current_chapter_title, current_chapter_content, next_index):
                 chapter_count += 1
 
         print(f"\nFinished splitting. Total chapters found and attempted to save: {chapter_count}")

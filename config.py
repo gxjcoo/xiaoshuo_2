@@ -25,7 +25,7 @@ _load_local_dotenv()
 # --- API 和路径配置 ---
 # 可选: "deepseek" | "doubao"
 # 优先使用环境变量覆盖，便于在不同机器/环境切换
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "doubao").strip().lower()
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek").strip().lower()
 
 if LLM_PROVIDER == "doubao":
     # 豆包（火山方舟 Ark）配置
