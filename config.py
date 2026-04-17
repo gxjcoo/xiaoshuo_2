@@ -106,7 +106,7 @@ CONTEXT_ANALYSIS_TEMPERATURE = 0.05
 # 生成章节温度：过低时句式易过于整齐，易被各平台判为「AI 特征偏高」。
 # 默认略调高以增加错落感；需要更稳的输出可设环境变量 CHAPTER_GENERATION_TEMPERATURE=0.2
 CHAPTER_GENERATION_TEMPERATURE = float(os.environ.get("CHAPTER_GENERATION_TEMPERATURE", "0.55"))
-# 注意：章节生成长度由命令行参数 --length 控制，这里不设置 max_tokens
+# 章节期望字数由 --length 控制；实际 API 的 max_tokens 在 ai_handler 中按字数换算（中文约 2 token/字），勿把字数直接当 max_tokens。
 
 # 风格分析时的参数
 STYLE_ANALYSIS_MAX_TOKENS = 4096
@@ -115,6 +115,10 @@ STYLE_ANALYSIS_TEMPERATURE = 0.05
 # --- 其他配置 ---
 # 处理章节内容时传递给 AI 的最大字符数，防止输入过长
 MAX_CHAPTER_CONTENT_LENGTH = 6000
+
+# 项目定位为「仿写」：严格跟 input 参考章情节；衔接上一章读原作、生成后不把生成稿反写进设定。
+# 默认开启。实验/同人自由续写可设 STRICT_SOURCE_PLOT=0 或命令行 --no_strict_source_plot。
+STRICT_SOURCE_PLOT = os.environ.get("STRICT_SOURCE_PLOT", "1").strip() in {"1", "true", "True", "YES", "yes"}
 
 # --- 降低 AI 味道配置 ---
 ENABLE_ANTI_AI_REWRITE = True
@@ -138,3 +142,13 @@ MAX_PRUNED_ARCHIVE_RELATIONSHIPS = 200
 # --- 自动知识同步 ---
 # 章节完成后自动更新 story_domain（无需人工审核）
 AUTO_UPDATE_DOMAIN_KNOWLEDGE = True
+
+# --- LLM 调试日志 ---
+# 开启后会打印每次请求的接口路径与响应预览，便于定位“模型到底返回了什么”
+DEBUG_LLM_LOG = os.environ.get("DEBUG_LLM_LOG", "1").strip() in {"1", "true", "True", "YES", "yes"}
+DEBUG_LLM_PREVIEW_CHARS = int(os.environ.get("DEBUG_LLM_PREVIEW_CHARS", "600"))
+
+# 豆包调用路径策略：
+# 0 = 默认走 OpenAI 兼容 chat.completions（更稳，适合本项目文本生成/JSON审计）
+# 1 = 优先走 Ark /responses（可能返回 reasoning 文本，适合特定场景）
+DOUBAO_USE_RESPONSES_API = os.environ.get("DOUBAO_USE_RESPONSES_API", "0").strip() in {"1", "true", "True", "YES", "yes"}

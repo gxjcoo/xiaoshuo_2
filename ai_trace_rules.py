@@ -217,7 +217,7 @@ def _voiceprint_gap_issue(text):
             "description": "可识别说话人不足 2 组，角色对话声线区分度弱。",
             "suggestion": "至少给两名核心角色固定口癖/句长偏好/语气差异，避免同一书面腔。",
             "span_hint": "对话层",
-        }, 8
+        }, 5
 
     def features(lines):
         joined = " ".join(lines)

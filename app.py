@@ -9,21 +9,41 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from config import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR
+from config import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, STRICT_SOURCE_PLOT
 from context_manager import load_story_context # 直接使用返回的上下文
 from chapter_processor import process_chapter
 
 def main():
     start_time = time.time() # 记录开始时间
-    parser = argparse.ArgumentParser(description="使用 AI 根据现有章节续写小说")
+    parser = argparse.ArgumentParser(
+        description=(
+            "仿写：对照 input 目录同名参考章生成 output（非自由续写、非另起故事）。"
+            "默认衔接 input 原作上一章并锁定本章参考情节；STRICT_SOURCE_PLOT=0 或 --no_strict_source_plot 可改为实验模式（output 衔接等）。"
+        )
+    )
     parser.add_argument("--input_dir", type=str, default=DEFAULT_INPUT_DIR, help="包含原始章节文件的目录")
     parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT_DIR, help="存放生成章节文件的目录")
     parser.add_argument("--start_chapter", type=int, default=None, help="要开始生成的起始章节号 (包含)")
     parser.add_argument("--end_chapter", type=int, default=None, help="要结束生成的章节号 (包含)")
     parser.add_argument("--chapter", type=int, default=None, help="只生成指定的单个章节号")
     parser.add_argument("--length", type=int, default=3000, help="期望生成章节的大致字数")
-    
+    parser.add_argument(
+        "--strict_source_plot",
+        action="store_true",
+        help="显式开启严格仿写（默认已开；与 STRICT_SOURCE_PLOT=1 同义）。",
+    )
+    parser.add_argument(
+        "--no_strict_source_plot",
+        action="store_true",
+        help="关闭严格仿写：允许用 output 衔接、生成稿反写上下文与 story_domain 自动增量（实验/同人续写用）。",
+    )
+
     args = parser.parse_args()
+    strict_source_plot = bool(STRICT_SOURCE_PLOT)
+    if getattr(args, "strict_source_plot", False):
+        strict_source_plot = True
+    if getattr(args, "no_strict_source_plot", False):
+        strict_source_plot = False
 
     # 初始化：加载故事上下文
     initial_context = load_story_context()
@@ -82,6 +102,10 @@ def main():
         sys.exit(1)
 
     print(f"\n=== 开始处理章节范围: {start_chapter} 到 {end_chapter} ===")
+    if strict_source_plot:
+        print("模式: 仿写（衔接 input 原作、情节以参考章为准、不据生成稿反写设定）。")
+    else:
+        print("模式: 实验（非严格仿写）：output 衔接与上下文反写已打开，输出可能偏离 input 参考主线。")
 
     # 循环处理指定范围的章节
     all_successful = True
@@ -90,10 +114,13 @@ def main():
 
     for chapter_num in range(start_chapter, end_chapter + 1):
         chapter_start_time = time.time()
-        success = process_chapter(chapter_num, 
-                                  args.input_dir, 
-                                  args.output_dir, 
-                                  args.length)
+        success = process_chapter(
+            chapter_num,
+            args.input_dir,
+            args.output_dir,
+            args.length,
+            strict_source_plot=strict_source_plot,
+        )
         chapter_end_time = time.time()
         chapter_duration = chapter_end_time - chapter_start_time
         

@@ -288,10 +288,18 @@ def simplify_context_items(max_items=15, max_elements=25):
         _merge_removed_items_to_archive(removed_items_archive, total_removed_count)
 
 
-def update_story_context_after_chapter(chapter_number, new_chapter_content):
-    """根据新章节内容，调用 AI 分析并更新全局 story_context"""
+def update_story_context_after_chapter(
+    chapter_number,
+    new_chapter_content,
+    strict_source_plot=False,
+):
+    """根据新章节内容，调用 AI 分析并更新全局 story_context。
+
+    strict_source_plot: 为 True 时不把生成稿反写进主角/世界设定，不跑 hooks 抽取与核心角色道具自动检测，
+    避免与「严格跟原作」分叉；仍会更新章节号与结尾滚动摘要（记录已发布输出）。
+    """
     global story_context
-    
+
     print("基础上下文更新：章节号 -> {}, 摘要已更新。".format(chapter_number))
     story_context["last_generated_chapter"] = chapter_number
     
@@ -316,99 +324,97 @@ def update_story_context_after_chapter(chapter_number, new_chapter_content):
     # 仅保留最近 12 章，控制上下文膨胀
     story_context["recent_chapter_summaries"] = rolling[-12:]
     
-    # Call AI analysis internally
-    print("准备调用 AI 分析上下文...")
-    context_for_ai = copy.deepcopy(story_context) 
-    ai_analysis_result = analyze_context_with_ai(context_for_ai, new_chapter_content) 
-    
-    # Merge AI results (existing robust logic)
-    if ai_analysis_result and isinstance(ai_analysis_result, dict):
-        print("准备合并 AI 分析结果...")
-        # 分别合并主角信息和世界设定
-        merged_protagonist = False 
-        merged_world = False 
-
-        if "protagonist_info" in ai_analysis_result and isinstance(ai_analysis_result["protagonist_info"], dict): 
-            try:
-                deep_merge_dicts(ai_analysis_result["protagonist_info"], story_context.setdefault("protagonist_info", {}))
-                print("已深度合并 AI 分析的主角信息更新。")
-                merged_protagonist = True
-            except Exception as e:
-                 print(f"警告: 合并主角信息时出错: {e}") 
-
-        if "world_setting" in ai_analysis_result and isinstance(ai_analysis_result["world_setting"], dict): 
-            try:
-                deep_merge_dicts(ai_analysis_result["world_setting"], story_context.setdefault("world_setting", {}))
-                print("已深度合并 AI 分析的世界设定更新。")
-                merged_world = True
-            except Exception as e:
-                 print(f"警告: 合并世界设定时出错: {e}") 
-
-        # Add checks for merge success like in app_back.py
-        if not merged_protagonist:
-             print("AI 返回的主角信息部分无效、缺失或合并失败，跳过合并。")
-        if not merged_world:
-             print("AI 返回的世界设定部分无效、缺失或合并失败，跳过合并。")
-
+    if strict_source_plot:
+        print("严格跟原作：跳过由生成稿反写的上下文合并、hooks 抽取、核心配角/道具自动检测。")
     else:
-        print("本次 AI 上下文分析未产生有效更新。详细上下文信息可能未更新。")
+        # Call AI analysis internally
+        print("准备调用 AI 分析上下文...")
+        context_for_ai = copy.deepcopy(story_context)
+        ai_analysis_result = analyze_context_with_ai(context_for_ai, new_chapter_content)
 
-    # 长连载增强：维护未回收线索池与分卷摘要
-    hook_update = analyze_hooks_and_volume_update(
-        copy.deepcopy(story_context),
-        new_chapter_content,
-        chapter_number,
-    )
-    pending_hooks = story_context.setdefault("pending_hooks", [])
-    if not isinstance(pending_hooks, list):
-        pending_hooks = []
+        # Merge AI results (existing robust logic)
+        if ai_analysis_result and isinstance(ai_analysis_result, dict):
+            print("准备合并 AI 分析结果...")
+            merged_protagonist = False
+            merged_world = False
 
-    # 新增 hooks 去重追加
-    for hook in hook_update.get("new_hooks", []):
-        if hook not in pending_hooks:
-            pending_hooks.append(hook)
+            if "protagonist_info" in ai_analysis_result and isinstance(ai_analysis_result["protagonist_info"], dict):
+                try:
+                    deep_merge_dicts(ai_analysis_result["protagonist_info"], story_context.setdefault("protagonist_info", {}))
+                    print("已深度合并 AI 分析的主角信息更新。")
+                    merged_protagonist = True
+                except Exception as e:
+                    print(f"警告: 合并主角信息时出错: {e}")
 
-    # 已回收 hooks 从池中移除（模糊包含匹配）
-    resolved_hooks = hook_update.get("resolved_hooks", [])
-    if resolved_hooks:
-        pruned = []
-        for old_hook in pending_hooks:
-            is_resolved = any(
-                (r in old_hook) or (old_hook in r)
-                for r in resolved_hooks
-                if isinstance(r, str) and r.strip()
-            )
-            if not is_resolved:
-                pruned.append(old_hook)
-        pending_hooks = pruned
+            if "world_setting" in ai_analysis_result and isinstance(ai_analysis_result["world_setting"], dict):
+                try:
+                    deep_merge_dicts(ai_analysis_result["world_setting"], story_context.setdefault("world_setting", {}))
+                    print("已深度合并 AI 分析的世界设定更新。")
+                    merged_world = True
+                except Exception as e:
+                    print(f"警告: 合并世界设定时出错: {e}")
 
-    story_context["pending_hooks"] = pending_hooks[-MAX_PENDING_HOOKS:]
+            if not merged_protagonist:
+                print("AI 返回的主角信息部分无效、缺失或合并失败，跳过合并。")
+            if not merged_world:
+                print("AI 返回的世界设定部分无效、缺失或合并失败，跳过合并。")
 
-    volume_summary = hook_update.get("volume_summary", "").strip()
-    if volume_summary:
-        volume_summaries = story_context.setdefault("volume_summaries", [])
-        if not isinstance(volume_summaries, list):
-            volume_summaries = []
-        volume_summaries.append({
-            "end_chapter": chapter_number,
-            "summary": volume_summary
-        })
-        story_context["volume_summaries"] = volume_summaries[-MAX_VOLUME_SUMMARIES:]
-    
-    # 自动检测并添加核心配角与道具
-    print("开始自动检测核心配角和道具...")
-    new_core_characters = auto_add_core_characters(new_chapter_content)
-    new_core_items = auto_add_core_items(new_chapter_content)
-    
-    if new_core_characters:
-        print(f"本章节新增核心配角: {', '.join(new_core_characters)}")
-    else:
-        print("本章节未检测到需要添加的新核心配角")
-        
-    if new_core_items:
-        print(f"本章节新增核心道具: {', '.join(new_core_items)}")
-    else:
-        print("本章节未检测到需要添加的新核心道具")
+        else:
+            print("本次 AI 上下文分析未产生有效更新。详细上下文信息可能未更新。")
+
+        # 长连载增强：维护未回收线索池与分卷摘要
+        hook_update = analyze_hooks_and_volume_update(
+            copy.deepcopy(story_context),
+            new_chapter_content,
+            chapter_number,
+        )
+        pending_hooks = story_context.setdefault("pending_hooks", [])
+        if not isinstance(pending_hooks, list):
+            pending_hooks = []
+
+        for hook in hook_update.get("new_hooks", []):
+            if hook not in pending_hooks:
+                pending_hooks.append(hook)
+
+        resolved_hooks = hook_update.get("resolved_hooks", [])
+        if resolved_hooks:
+            pruned = []
+            for old_hook in pending_hooks:
+                is_resolved = any(
+                    (r in old_hook) or (old_hook in r)
+                    for r in resolved_hooks
+                    if isinstance(r, str) and r.strip()
+                )
+                if not is_resolved:
+                    pruned.append(old_hook)
+            pending_hooks = pruned
+
+        story_context["pending_hooks"] = pending_hooks[-MAX_PENDING_HOOKS:]
+
+        volume_summary = hook_update.get("volume_summary", "").strip()
+        if volume_summary:
+            volume_summaries = story_context.setdefault("volume_summaries", [])
+            if not isinstance(volume_summaries, list):
+                volume_summaries = []
+            volume_summaries.append({
+                "end_chapter": chapter_number,
+                "summary": volume_summary
+            })
+            story_context["volume_summaries"] = volume_summaries[-MAX_VOLUME_SUMMARIES:]
+
+        print("开始自动检测核心配角和道具...")
+        new_core_characters = auto_add_core_characters(new_chapter_content)
+        new_core_items = auto_add_core_items(new_chapter_content)
+
+        if new_core_characters:
+            print(f"本章节新增核心配角: {', '.join(new_core_characters)}")
+        else:
+            print("本章节未检测到需要添加的新核心配角")
+
+        if new_core_items:
+            print(f"本章节新增核心道具: {', '.join(new_core_items)}")
+        else:
+            print("本章节未检测到需要添加的新核心道具")
     
     # 在保存前简化上下文项目
     print("正在简化上下文关键项目...")

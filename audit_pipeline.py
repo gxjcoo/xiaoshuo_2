@@ -2,6 +2,7 @@ import json
 import re
 
 from config import ENABLE_ANTI_AI_REWRITE, ANTI_AI_MAX_ROUNDS, AUDIT_NEAR_PASS_DELTA
+from config import CHAPTER_GENERATION_MODEL, CONTEXT_ANALYSIS_MODEL
 from ai_handler import call_deepseek_api
 from ai_trace_rules import analyze_ai_trace
 
@@ -149,8 +150,63 @@ def evaluate_chapter_with_rules(
     )
     if not raw:
         return {"total_score": 0, "pass": False, "issues": ["审计失败"], "suggestions": []}
+
+    def _extract_balanced_json(text):
+        if not text:
+            return ""
+        start = text.find("{")
+        if start < 0:
+            return ""
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+        return ""
+
+    def _parse_json_relaxed(text):
+        candidates = []
+        t = (text or "").strip()
+        if t:
+            candidates.append(t)
+        fenced = re.findall(r"```(?:json)?\s*([\s\S]*?)```", t, flags=re.IGNORECASE)
+        for block in fenced:
+            b = block.strip()
+            if b:
+                candidates.append(b)
+        balanced = _extract_balanced_json(t)
+        if balanced:
+            candidates.append(balanced)
+
+        for cand in candidates:
+            try:
+                parsed_obj = json.loads(cand)
+                if isinstance(parsed_obj, dict):
+                    return parsed_obj
+            except Exception:
+                continue
+        return None
+
     try:
-        parsed = json.loads(raw)
+        parsed = _parse_json_relaxed(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("审计输出非 JSON 对象")
         result = {
             "total_score": int(parsed.get("total_score", 0)),
             "pass": bool(parsed.get("pass", False)),
@@ -165,7 +221,14 @@ def evaluate_chapter_with_rules(
         rule_issues = deterministic.get("issues", []) if isinstance(deterministic.get("issues", []), list) else []
         result["ai_trace_rule_issues"] = rule_issues
         if penalty > 0:
-            result["total_score"] = max(0, int(result.get("total_score", 0)) - penalty)
+            # 确定性扣分与模型分叠加易把「已通过」的章节压穿阈值；对总分与 ai_trace 分别封顶
+            cap_total = int(rules.get("deterministic_penalty_cap_total", 12))
+            cap_ai = int(rules.get("deterministic_penalty_cap_ai_trace", 10))
+            cap_total = max(0, cap_total)
+            cap_ai = max(0, cap_ai)
+            applied_total = min(penalty, cap_total)
+            applied_ai = min(penalty, cap_ai)
+            result["total_score"] = max(0, int(result.get("total_score", 0)) - applied_total)
             dims = result.get("dimension_scores", {})
             if not isinstance(dims, dict):
                 dims = {}
@@ -174,7 +237,7 @@ def evaluate_chapter_with_rules(
                 ai_trace_score = int(ai_trace_raw)
             except Exception:
                 ai_trace_score = 0
-            dims["ai_trace"] = max(0, ai_trace_score - penalty)
+            dims["ai_trace"] = max(0, ai_trace_score - applied_ai)
             result["dimension_scores"] = dims
 
             extra_issue_lines = [
@@ -188,9 +251,9 @@ def evaluate_chapter_with_rules(
             result["issues"] = (result.get("issues", []) or []) + extra_issue_lines
             result["suggestions"] = (result.get("suggestions", []) or []) + extra_suggestion_lines
 
-        # 规则命中严重时强制不通过，避免“分数侥幸过线”
-        severe_hits = len([i for i in rule_issues if isinstance(i, dict) and i.get("severity") == "warning"])
-        structural_hard_rules = {"事件密度不足", "解释段超限", "角色声纹同构", "角色声纹不足"}
+        # 仅统计明确标为 severe 的命中；勿用 severity==warning（当前软规则也用它，会误伤）
+        severe_hits = len([i for i in rule_issues if isinstance(i, dict) and i.get("severity") == "severe"])
+        structural_hard_rules = {"事件密度不足", "解释段超限", "角色声纹同构"}
         structural_hard_hits = [
             i for i in rule_issues
             if isinstance(i, dict) and i.get("rule") in structural_hard_rules
@@ -198,8 +261,14 @@ def evaluate_chapter_with_rules(
         result["structural_hard_hits"] = len(structural_hard_hits)
         if severe_hits >= 3 or structural_hard_hits:
             result["pass"] = False
+        if "pass" not in parsed:
+            result["pass"] = int(result.get("total_score", 0)) >= int(rules.get("pass_threshold", 85))
         return result
-    except Exception:
+    except Exception as e:
+        preview = (raw or "").replace("\n", "\\n")
+        if len(preview) > 400:
+            preview = preview[:400] + "...(truncated)"
+        print(f"警告：审计结果解析失败: {e}; raw_preview={preview}")
         return {"total_score": 0, "pass": False, "issues": ["审计结果解析失败"], "suggestions": []}
 
 
@@ -258,8 +327,8 @@ def audit_and_revise_until_pass(
     domain_text="",
     author_intent_text="",
     current_focus_text="",
-    generation_model="deepseek-chat",
-    analysis_model="deepseek-chat",
+    generation_model=CHAPTER_GENERATION_MODEL,
+    analysis_model=CONTEXT_ANALYSIS_MODEL,
 ):
     """按规则循环审计修订，达标才返回成功。"""
     if not chapter_content:
@@ -322,7 +391,7 @@ def audit_and_revise_until_pass(
 
         # 将去 AI 味作为 ai_trace 维度的专属修订策略并入唯一审计循环
         if ENABLE_ANTI_AI_REWRITE:
-            if ai_trace_score < pass_threshold and reference_text:
+            if ai_trace_score < ai_trace_hard_threshold and reference_text:
                 style_compare = compare_reference_and_generated(reference_text, current)
                 current = anti_ai_rewrite_with_reference(
                     reference_text,
@@ -335,7 +404,24 @@ def audit_and_revise_until_pass(
                     ai_trace_findings=last_audit.get("ai_trace_rule_issues", []),
                     model=generation_model,
                 )
-                print("ai_trace 维度未达标，已执行一次参考文去模板化修订。")
+                print(
+                    f"ai_trace 硬阈值未达标（{ai_trace_score} < {ai_trace_hard_threshold}），已执行一次参考文去模板化修订。"
+                )
+            elif reference_text and not passed:
+                # 在总评未过但 ai_trace 达标时，保留一次轻量去模板化优化（避免误导为“未达标”）
+                style_compare = compare_reference_and_generated(reference_text, current)
+                current = anti_ai_rewrite_with_reference(
+                    reference_text,
+                    current,
+                    style_compare,
+                    chapter_number,
+                    writing_style,
+                    chapter_plan_text=chapter_plan_text,
+                    domain_text=domain_text,
+                    ai_trace_findings=last_audit.get("ai_trace_rule_issues", []),
+                    model=generation_model,
+                )
+                print("ai_trace 已达硬阈值，但总评未通过，已执行一次轻量去模板化优化。")
 
         current = revise_chapter_by_audit_feedback(
             current,

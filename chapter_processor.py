@@ -177,6 +177,8 @@ def load_audit_rules():
     """加载审计规则，缺失或异常时回退默认规则。"""
     default_rules = {
         "pass_threshold": 85,
+        "deterministic_penalty_cap_total": 12,
+        "deterministic_penalty_cap_ai_trace": 10,
         "ai_trace_hard_threshold": 80,
         "max_revise_rounds": AUDIT_MAX_REVISE_ROUNDS,
         "dimensions": [
@@ -194,6 +196,8 @@ def load_audit_rules():
         if not isinstance(loaded, dict):
             return default_rules
         loaded.setdefault("pass_threshold", default_rules["pass_threshold"])
+        loaded.setdefault("deterministic_penalty_cap_total", 12)
+        loaded.setdefault("deterministic_penalty_cap_ai_trace", 10)
         loaded.setdefault("ai_trace_hard_threshold", default_rules["ai_trace_hard_threshold"])
         loaded.setdefault("max_revise_rounds", default_rules["max_revise_rounds"])
         loaded.setdefault("dimensions", default_rules["dimensions"])
@@ -273,17 +277,31 @@ def auto_update_domain_knowledge(chapter_number, chapter_content, current_contex
         updates.get("voice", []),
     )
 
-def process_chapter(chapter_number, input_dir, output_dir, length):
-    """处理单个章节：读取、分析风格、生成、保存、分析上下文、更新上下文"""
-    print(f"\n--- 处理章节 {chapter_number} ---")
+def _load_reference_chapter_from_input(input_dir, chapter_number):
+    """读取 input 目录中指定章参考正文；占位或缺失时返回 None。"""
+    path = os.path.join(input_dir, f"{chapter_number}.md")
+    if not os.path.isfile(path):
+        return None
+    content = read_chapter_file(path)
+    if not content or reference_still_placeholder(content, chapter_number):
+        return None
+    return content
+
+
+def process_chapter(chapter_number, input_dir, output_dir, length, strict_source_plot=True):
+    """仿写单章：对照 input/{n}.md 生成 output/{n}.md（非扩写、非脱离参考的新故事）。
+
+    strict_source_plot: True（默认）时衔接 input 原作上一章、规划/生成锁定参考情节、
+    不把生成稿反写进 story_context / 不写 story_domain 自动增量。False 时为实验模式。
+    """
+    print(f"\n--- 处理章节 {chapter_number}（仿写） ---")
     input_filepath = os.path.join(input_dir, f"{chapter_number}.md")
     output_filepath = os.path.join(output_dir, f"{chapter_number}.md")
 
     if not ensure_input_chapter_ready(chapter_number, input_dir, input_filepath):
         return False
 
-    # 1. 读取原始或上一章节内容 (用于风格分析和续写参考)
-    # 优先读取输入目录的原始文件用于风格分析
+    # 1. 读取 input 参考章（风格锚点 + 情节真值；非「另写一章」的自由创作）
     print(f"读取原始章节: {input_filepath}")
     original_content = read_chapter_file(input_filepath)
     if not original_content:
@@ -303,15 +321,27 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
         )
         return False
 
-    # 获取上一章节的输出内容用于续写参考 (如果不是第一章)
     previous_chapter_content = None
     if chapter_number > 1:
-        prev_output_filepath = os.path.join(output_dir, f"{chapter_number - 1}.md")
-        if os.path.exists(prev_output_filepath):
-             print(f"读取上一章节输出参考: {prev_output_filepath}")
-             previous_chapter_content = read_chapter_file(prev_output_filepath)
-        else:
-             print(f"警告：未找到上一章节 {prev_output_filepath} 的输出文件，将不提供续写参考。")
+        if strict_source_plot:
+            prev_ref = _load_reference_chapter_from_input(input_dir, chapter_number - 1)
+            if prev_ref:
+                previous_chapter_content = prev_ref
+                print(
+                    f"仿写衔接：使用 input 原作上一章 {os.path.join(input_dir, f'{chapter_number - 1}.md')}"
+                )
+            else:
+                print(
+                    f"警告：未找到可用 input 原作上一章 {chapter_number - 1}.md，"
+                    f"将回退为 output 已生成稿衔接（可能与参考原作不一致，建议补全 input）。"
+                )
+        if previous_chapter_content is None:
+            prev_output_filepath = os.path.join(output_dir, f"{chapter_number - 1}.md")
+            if os.path.exists(prev_output_filepath):
+                print(f"读取上一章 output 衔接: {prev_output_filepath}")
+                previous_chapter_content = read_chapter_file(prev_output_filepath)
+            else:
+                print(f"警告：未找到上一章 output {prev_output_filepath}，无衔接片段。")
 
     # 2. 分析写作风格 (基于原始章节)
     writing_style = analyze_writing_style(original_content)
@@ -343,6 +373,8 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
         previous_chapter_content=previous_chapter_content,
         author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
+        reference_chapter_text=original_content,
+        strict_source_plot=strict_source_plot,
     )
     if chapter_plan_text:
         print("本章意图规划完成，将用于约束正文生成焦点。")
@@ -360,6 +392,8 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
         author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
         audit_requirements_text=audit_requirements_text,
+        reference_chapter_text=original_content,
+        strict_source_plot=strict_source_plot,
     )
     if not new_chapter_content:
         print(f"错误：未能生成章节 {chapter_number} 的内容，跳过此章节。")
@@ -393,6 +427,7 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
         current_context,
         {
             "chapter": chapter_number,
+            "strict_source_plot": bool(strict_source_plot),
             "has_domain_text": bool(domain_text),
             "has_author_intent": bool(author_intent_text),
             "has_current_focus": bool(current_focus_text),
@@ -409,12 +444,18 @@ def process_chapter(chapter_number, input_dir, output_dir, length):
 
     # 8. 更新并保存故事上下文（内部会完成 AI 上下文分析）
     # 即使 AI 分析失败，也仍会更新章节号与章节结尾摘要
-    update_story_context_after_chapter(chapter_number, new_chapter_content)
+    update_story_context_after_chapter(
+        chapter_number,
+        new_chapter_content,
+        strict_source_plot=strict_source_plot,
+    )
 
     # 9. 自动同步 story_domain 增量
-    if AUTO_UPDATE_DOMAIN_KNOWLEDGE:
+    if AUTO_UPDATE_DOMAIN_KNOWLEDGE and not strict_source_plot:
         latest_context = get_current_context()
         auto_update_domain_knowledge(chapter_number, new_chapter_content, latest_context)
+    elif AUTO_UPDATE_DOMAIN_KNOWLEDGE and strict_source_plot:
+        print("严格跟原作：跳过 story_domain 自动增量。")
 
     print(f"章节 {chapter_number} 处理完成。")
     return True # 表示处理成功

@@ -1,5 +1,6 @@
 import httpx
 import json
+import re
 import time
 import openai
 
@@ -20,7 +21,185 @@ from config import (
     CHAPTER_GENERATION_TEMPERATURE,
     MAX_CHAPTER_CONTENT_LENGTH,
     VOLUME_CHAPTER_SIZE,
+    DEBUG_LLM_LOG,
+    DEBUG_LLM_PREVIEW_CHARS,
+    DOUBAO_USE_RESPONSES_API,
 )
+
+def _preview_text(text, limit=600):
+    if not isinstance(text, str):
+        return ""
+    cleaned = text.replace("\r", " ").replace("\n", "\\n")
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit] + "...(truncated)"
+
+
+def _debug_log_request(model, messages, temperature, max_tokens, response_format=None):
+    if not DEBUG_LLM_LOG:
+        return
+    print(
+        f"[LLM DEBUG] sending model={model} temperature={temperature} max_tokens={max_tokens} response_format={response_format}",
+        flush=True,
+    )
+    if not isinstance(messages, list):
+        print(f"[LLM DEBUG] messages={_preview_text(str(messages), DEBUG_LLM_PREVIEW_CHARS)}", flush=True)
+        return
+    for idx, msg in enumerate(messages, start=1):
+        role = msg.get("role", "unknown") if isinstance(msg, dict) else "unknown"
+        content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
+        if not isinstance(content, str):
+            content = str(content)
+        print(
+            f"[LLM DEBUG] message[{idx}] role={role} content={_preview_text(content, DEBUG_LLM_PREVIEW_CHARS)}",
+            flush=True,
+        )
+
+
+def _brief_style_for_generation(writing_style, max_chars=1100):
+    """风格分析往往带 Markdown 条目，直接全文注入易诱发「分析腔/清单体」正文。"""
+    if not isinstance(writing_style, str) or not writing_style.strip():
+        return "（风格备忘缺失：保持口语、松紧交替，少用抽象收束句。）"
+    s = writing_style.strip()
+    s = re.sub(r"^#+\s*", "", s, flags=re.MULTILINE)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    if len(s) <= max_chars:
+        return s
+    return s[: max_chars - 24].rstrip() + "\n…(备忘已截断；禁止模仿其中小标题、编号与排比结构。)"
+
+
+def _reference_prose_snippet(text, max_chars=2600):
+    """截取参考原文供对齐语感；避免只喂分析报告导致写法「像写论文」。"""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    s = text.strip()
+    if len(s) <= max_chars:
+        return s
+    head = s[: max_chars - 320]
+    tail = s[-280:]
+    return f"{head.rstrip()}\n\n…(参考原文中部已省略)…\n\n{tail.lstrip()}"
+
+
+def _slim_context_for_generation(current_context, writing_chapter_number=None):
+    """生成侧瘦身：完整 JSON 易诱发按 pending_hooks/设定清单扩写。
+
+    writing_chapter_number: 本次正在生成的章节号；用于消解 last_generated_chapter 被误读为「下一章」。
+    """
+    if not isinstance(current_context, dict):
+        return {}
+    pi = current_context.get("protagonist_info") or {}
+    ws = current_context.get("world_setting") or {}
+    slim_pi = {}
+    if isinstance(pi, dict):
+        slim_pi = {
+            "name": pi.get("name"),
+            "description": (pi.get("description") or "")[:220],
+            "status_summary": (pi.get("status_summary") or "")[:300],
+        }
+        items = pi.get("key_items_abilities")
+        if isinstance(items, list):
+            slim_pi["key_items_abilities"] = [str(x)[:90] for x in items[:5]]
+        rel = pi.get("key_relationships")
+        if isinstance(rel, dict):
+            keys = list(rel.keys())[:6]
+            slim_pi["key_relationships"] = {k: str(rel[k])[:110] for k in keys}
+    slim_ws = {}
+    if isinstance(ws, dict):
+        slim_ws = {
+            "description": (ws.get("description") or "")[:220],
+            "location": (ws.get("location") or "")[:220],
+        }
+        el = ws.get("key_elements")
+        if isinstance(el, list):
+            slim_ws["key_elements"] = [str(x)[:100] for x in el[:6]]
+    hooks = current_context.get("pending_hooks") or []
+    if isinstance(hooks, list):
+        hooks = [str(h)[:120] for h in hooks[-8:]]
+    else:
+        hooks = []
+    out = {
+        "last_generated_chapter": current_context.get("last_generated_chapter", 0),
+        "protagonist_info": slim_pi,
+        "world_setting": slim_ws,
+        "recent_plot_summary": (current_context.get("recent_plot_summary") or "")[:450],
+        "pending_hooks": hooks,
+    }
+    if writing_chapter_number is not None:
+        out["本次须输出的章节号"] = int(writing_chapter_number)
+        out["_说明"] = (
+            "last_generated_chapter 仅表示 story_context.json 里上次落盘更新过的章节号，"
+            "重跑同一章时可能与「本次须输出的章节号」相同；标题与正文中的章号必须与「本次须输出的章节号」一致，禁止自增成下一章。"
+        )
+    return out
+
+
+def _chapter_completion_max_tokens(target_length):
+    """中文正文约 1.5–2 token/字；target_length 为期望字数时不可把 max_tokens 当字数用。"""
+    try:
+        n = int(target_length)
+    except Exception:
+        n = 3000
+    return max(2048, int(n * 2.2) + 512)
+
+
+def _looks_like_meta_reasoning(text):
+    """识别“用户现在需要…”这类元推理开头，避免污染下游审计/生成流程。"""
+    if not isinstance(text, str):
+        return False
+    s = text.strip()
+    if not s:
+        return False
+    head = s[:120]
+    bad_prefixes = (
+        "用户现在需要",
+        "用户需要我",
+        "我现在需要",
+        "首先得",
+        "首先先",
+        "先看",
+        "我们先",
+    )
+    if any(head.startswith(p) for p in bad_prefixes):
+        return True
+    # 常见“思维过程”提示词
+    if ("对吧" in head or "先理清楚" in head) and ("用户" in head):
+        return True
+    return False
+
+
+def _debug_log_response(path_label, model, content, extra=""):
+    if not DEBUG_LLM_LOG:
+        return
+    preview = _preview_text(content or "", DEBUG_LLM_PREVIEW_CHARS)
+    size = len(content or "")
+    suffix = f" {extra}" if extra else ""
+    print(f"[LLM DEBUG] path={path_label} model={model} chars={size}{suffix}", flush=True)
+    print(f"[LLM DEBUG] preview={preview}", flush=True)
+
+
+def _call_openai_chat_api(messages, model, timeout, max_tokens=None, temperature=0.7, response_format=None, path_label="openai.chat.completions"):
+    with httpx.Client(timeout=timeout) as http_client:
+        if DEBUG_LLM_LOG:
+            print(f"[LLM DEBUG] processing path={path_label} endpoint={BASE_URL.rstrip('/')}/chat/completions", flush=True)
+        client = openai.OpenAI(
+            api_key=API_KEY,
+            base_url=BASE_URL,
+            http_client=http_client,
+        )
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        response = client.chat.completions.create(**kwargs)
+        content = (response.choices[0].message.content or "").strip()
+        _debug_log_response(path_label, model, content)
+        return content
+
 
 def _extract_text_from_ark_response(data):
     """从 Ark /responses 返回中尽量提取纯文本。"""
@@ -31,9 +210,18 @@ def _extract_text_from_ark_response(data):
         output = data.get("output")
         if isinstance(output, list):
             chunks = []
+            reasoning_chunks = []
             for item in output:
                 if not isinstance(item, dict):
                     continue
+                if item.get("type") == "reasoning":
+                    summary = item.get("summary")
+                    if isinstance(summary, list):
+                        for s in summary:
+                            if isinstance(s, dict):
+                                t = s.get("text") or s.get("summary_text")
+                                if isinstance(t, str) and t.strip():
+                                    reasoning_chunks.append(t.strip())
                 content = item.get("content")
                 if isinstance(content, list):
                     for c in content:
@@ -44,6 +232,9 @@ def _extract_text_from_ark_response(data):
                             chunks.append(text.strip())
             if chunks:
                 return "\n".join(chunks).strip()
+            # 兜底：当模型只返回 reasoning summary 且被截断时，至少返回可用文本
+            if reasoning_chunks:
+                return "\n".join(reasoning_chunks).strip()
     return ""
 
 
@@ -73,13 +264,19 @@ def _call_ark_responses_api(messages, model, timeout, max_tokens=None, temperatu
         "Content-Type": "application/json",
     }
     endpoint = f"{BASE_URL.rstrip('/')}/responses"
+    if DEBUG_LLM_LOG:
+        print(f"[LLM DEBUG] processing path=ark.responses endpoint={endpoint}", flush=True)
 
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(endpoint, headers=headers, json=payload)
+        if resp.status_code == 404:
+            # 某些 Ark 环境未开通 /responses，回退到 OpenAI 兼容 chat.completions
+            raise FileNotFoundError("Ark /responses endpoint not available")
         resp.raise_for_status()
         data = resp.json()
         text = _extract_text_from_ark_response(data)
         if text:
+            _debug_log_response("ark.responses", model, text, extra=f"status={resp.status_code}")
             return text
         raise RuntimeError(f"Ark 返回中未提取到文本: {str(data)[:600]}")
 
@@ -104,44 +301,61 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
                 f"读超时={API_HTTP_READ_TIMEOUT}s",
                 flush=True,
             )
+            _debug_log_request(model, messages, temperature, max_tokens, response_format=response_format)
             print(
                 "  → 等待服务端响应中（网络慢或模型排队时可能需一至数分钟，并非死机）…",
                 flush=True,
             )
 
             if LLM_PROVIDER == "doubao":
-                content = _call_ark_responses_api(
+                if DOUBAO_USE_RESPONSES_API:
+                    try:
+                        content = _call_ark_responses_api(
+                            messages=messages,
+                            model=model,
+                            timeout=timeout,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                        )
+                    except FileNotFoundError:
+                        if DEBUG_LLM_LOG:
+                            print("[LLM DEBUG] ark.responses unavailable, fallback -> chat.completions", flush=True)
+                        content = _call_openai_chat_api(
+                            messages=messages,
+                            model=model,
+                            timeout=timeout,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            response_format=response_format,
+                            path_label="ark.chat.completions(fallback)",
+                        )
+                else:
+                    content = _call_openai_chat_api(
+                        messages=messages,
+                        model=model,
+                        timeout=timeout,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        response_format=response_format,
+                        path_label="ark.chat.completions",
+                    )
+            else:
+                content = _call_openai_chat_api(
                     messages=messages,
                     model=model,
                     timeout=timeout,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    response_format=response_format,
+                    path_label="openai.chat.completions",
                 )
-            else:
-                with httpx.Client(timeout=timeout) as http_client:
-                    client = openai.OpenAI(
-                        api_key=API_KEY,
-                        base_url=BASE_URL,
-                        http_client=http_client,
-                    )
 
-                    kwargs = {
-                        "model": model,
-                        "messages": messages,
-                        "temperature": temperature,
-                    }
-                    if max_tokens is not None:
-                        kwargs["max_tokens"] = max_tokens
-                    if response_format is not None:
-                        kwargs["response_format"] = response_format
-
-                    try:
-                        response = client.chat.completions.create(**kwargs)
-                        content = response.choices[0].message.content.strip()
-                    except AttributeError:
-                        kwargs["model"] = model
-                        response = openai.Completion.create(**kwargs)
-                        content = response.choices[0].text.strip()
+            # 审计前/生成前防污染：拦截“元推理”文本并触发立即重试
+            if _looks_like_meta_reasoning(content):
+                if DEBUG_LLM_LOG:
+                    print("[LLM DEBUG] invalid meta-reasoning response detected, force retry", flush=True)
+                    print(f"[LLM DEBUG] meta_preview={_preview_text(content, DEBUG_LLM_PREVIEW_CHARS)}", flush=True)
+                raise RuntimeError("模型返回了元推理文本（如“用户现在需要…”），已判定为无效响应")
 
             return content
 
@@ -172,7 +386,8 @@ def analyze_writing_style(text_sample):
 
     # 使用针对风格分析优化的提示词
     prompt = (
-        f"请对以下原始小说文本进行全面、深入的分析，确保后续生成的内容能与原作保持高度一致。分析需涵盖以下几个关键维度：\n\n"
+        f"请对以下**参考原文**（用于仿写对照）做全面分析，使后续仿写输出在语气、节奏与笔法上与原作一致；"
+        f"分析服务于「同情节再叙述」而非「另写新故事」。分析需涵盖以下几个关键维度：\n\n"
         f"1. **语言风格细节**：\n"
         f"   - 语气和基调：文本的情感色彩和总体氛围（庄重、轻松、紧张、诙谐等）\n"
         f"   - 句法结构：句子长短、复杂度，常用句式模式，有无特殊断句或排版特点\n" 
@@ -194,11 +409,17 @@ def analyze_writing_style(text_sample):
         f"   - 核心主题：文本传达的核心思想或情感\n"
         f"   - 情感表达：喜怒哀乐等情感的表达方式和强度\n\n"
         f"原始文本样本：\n\n{limited_sample}\n\n"
-        f"请提供详细分析，确保捕捉到原文的独特风格特征。分析应当足够具体，能够指导后续内容创作。\n\n"
+        f"请提供详细分析，确保捕捉到原文的独特风格特征；分析应足够具体，能指导**仿写**时的遣词与节奏（不要求编造新剧情）。\n\n"
     )
 
     messages = [
-        {"role": "system", "content": "你是一位精通文学分析的专家，擅长捕捉文本的语言风格、叙事结构和表达特点。请对提供的文本样本进行深入分析。"},
+        {
+            "role": "system",
+            "content": (
+                "你是一位精通文学分析的专家，擅长从参考文本中提取仿写所需的语言风格、叙事节奏与表达习惯；"
+                "你的输出将用于「同作再叙述」而非创作新故事大纲。"
+            ),
+        },
         {"role": "user", "content": prompt}
     ]
     
@@ -229,24 +450,43 @@ def plan_chapter_with_ai(
     previous_chapter_content=None,
     author_intent_text="",
     current_focus_text="",
+    reference_chapter_text="",
+    strict_source_plot=False,
 ):
     """生成本章意图规划（短文本），用于约束正文生成焦点。"""
     context_json = json.dumps(current_context, ensure_ascii=False, indent=2)
     previous_tail = (previous_chapter_content or "")[-1200:]
+    ref_snip = ""
+    strict_head = ""
+    if strict_source_plot and (reference_chapter_text or "").strip():
+        ref_snip = _reference_prose_snippet(reference_chapter_text, max_chars=4200)
+        strict_head = (
+            "【模式：严格跟原作情节】\n"
+            "本章意图必须能从「本章参考原文节选」中推导：只拆解已有场景顺序、冲突与信息点，写成可执行写作点；"
+            "不得新增参考原文里不存在的关键事件、不得改因果与结局走向。\n"
+            "若与【作者长期意图】【近期焦点】或 JSON 上下文冲突，一律以参考原文为准，其余仅作语气参考。\n\n"
+            f"【本章参考原文节选（意图规划唯一情节依据）】\n```\n{ref_snip}\n```\n\n"
+        )
     prompt = (
+        f"{strict_head}"
+        f"【章节号】你正在为第 {target_chapter_number} 章列写作意图；不得把对象误写成第 {target_chapter_number + 1} 章。\n\n"
         f"你是小说章节规划师。请为第 {target_chapter_number} 章输出一份简洁可执行的写作意图。\n\n"
         f"输出要求：\n"
         f"1) 只输出纯文本，不要 Markdown 表格。\n"
         f"2) 控制在 8 条以内，每条一句话。\n"
         f"3) 至少包含：主线推进、角色变化、关键冲突、伏笔/回收点。\n"
-        f"4) 不得与既有设定冲突，不得新增未铺垫的大设定。\n\n"
+        f"4) 不得与既有设定冲突，不得新增未铺垫的大设定。\n"
+        f"5) 用自然语言短句列出即可，不要写成正文片段或带编号的小标题目录。\n\n"
         f"【当前上下文】\n{context_json}\n\n"
-        f"【上一章结尾（可选）】\n{previous_tail if previous_tail else '无'}\n\n"
+        f"【上一章结尾（衔接用，可选）】\n{previous_tail if previous_tail else '无'}\n\n"
         f"【作者长期意图（可选）】\n{author_intent_text if author_intent_text else '无'}\n\n"
-        f"【近期焦点（可选，优先考虑）】\n{current_focus_text if current_focus_text else '无'}\n"
+        f"【近期焦点（可选）】\n{current_focus_text if current_focus_text else '无'}\n"
     )
+    system_msg = "你擅长把「仿写」任务拆成可执行写作点：只拆解参考里已有戏，不发明新主线。"
+    if strict_source_plot and ref_snip:
+        system_msg += " 当前为严格仿写：意图必须与参考原文场次一一对应，不得添加参考中不存在的关键事件。"
     messages = [
-        {"role": "system", "content": "你擅长将长篇小说连载目标拆成可执行章节意图，强调连贯与可落地。"},
+        {"role": "system", "content": system_msg},
         {"role": "user", "content": prompt},
     ]
     plan_text = call_deepseek_api(messages, CHAPTER_GENERATION_MODEL, max_tokens=800, temperature=0.3)
@@ -313,10 +553,14 @@ def generate_chapter_content(
     author_intent_text="",
     current_focus_text="",
     audit_requirements_text="",
+    reference_chapter_text="",
+    strict_source_plot=False,
 ):
     """使用 AI 生成新的章节内容。
 
     domain_text: 领域圣经（DDD），静态设定与统一说法。
+    reference_chapter_text: 输入目录参考章原文（用于对齐语感，避免只喂风格分析报告）。
+    strict_source_plot: 情节以参考章为准，衔接上一章优先原作（由调用方传入 previous 内容）。
     """
     if target_chapter_number is None:
         chapter_number = current_context.get("last_generated_chapter", 0) + 1
@@ -327,22 +571,62 @@ def generate_chapter_content(
     rolling_summaries = current_context.get("recent_chapter_summaries", [])
     if isinstance(rolling_summaries, list) and rolling_summaries:
         rolling_text = "\n".join(
-            f"- 第{item.get('chapter', '?')}章：{item.get('summary', '')}"
+            f"- 第{item.get('chapter', '?')}章：{(item.get('summary', '') or '')[:160]}"
             for item in rolling_summaries[-8:]
             if isinstance(item, dict)
         ).strip()
     else:
         rolling_text = ""
 
-    current_context_summary = (
-        f"当前故事背景：章节 {current_context.get('last_generated_chapter', 0)}，"
-        f"主角信息：{current_context.get('protagonist_info', {})}, "
-        f"世界设定：{current_context.get('world_setting', {})}, "
-        f"近期情节摘要：{current_context.get('recent_plot_summary', '无')}\n"
-        f"最近章节滚动记忆：\n{rolling_text if rolling_text else '无'}\n"
-        f"待回收线索：{current_context.get('pending_hooks', [])[-12:]}\n"
-        f"分卷摘要：{current_context.get('volume_summaries', [])[-3:]}"
+    slim_ctx = _slim_context_for_generation(current_context, writing_chapter_number=chapter_number)
+    chapter_number_guard = (
+        f"【章节编号（硬约束）】\n"
+        f"你必须写且仅写「第 {chapter_number} 章」：第一行标题必须是 `# 第{chapter_number}章`（阿拉伯数字与「章」之间无空格亦可）加空格加副题。\n"
+        f"禁止因 JSON 中出现 last_generated_chapter、滚动摘要或其它字段而自行把章号加一（例如已记录到第 1 章却仍要求你写第 1 章时，不得写成第 2 章）。\n\n"
     )
+    current_context_summary = (
+        f"{chapter_number_guard}"
+        "【故事状态（生成侧已压缩，勿逐条扩写成目录式正文）】\n"
+        f"{json.dumps(slim_ctx, ensure_ascii=False, indent=2)}\n"
+        f"最近章节滚动记忆：\n{rolling_text if rolling_text else '无'}\n"
+        f"分卷摘要：{(current_context.get('volume_summaries') or [])[-2:]}"
+    )
+
+    style_brief = _brief_style_for_generation(writing_style)
+    ref_cap = 5600 if strict_source_plot else 2600
+    ref_snippet = (
+        _reference_prose_snippet(reference_chapter_text, max_chars=ref_cap)
+        if reference_chapter_text
+        else ""
+    )
+    reference_block = ""
+    if ref_snippet:
+        if strict_source_plot:
+            reference_block = (
+                "【本章参考原文（情节、场次顺序、因果与人物结果以此为最高准则；"
+                "可扩写对白、感官、过渡，禁止另起与参考冲突的主线或关键反转）】\n"
+                f"```\n{ref_snippet}\n```\n\n"
+            )
+        else:
+            reference_block = (
+                "【本章参考原文（仿写对象；对齐语气与节奏；情节主干以此为准，意图仅辅助）】\n"
+                f"```\n{ref_snippet}\n```\n\n"
+            )
+
+    if strict_source_plot:
+        strict_plot_contract = (
+            "【仿写｜情节以参考原文为唯一真值】\n"
+            "1) 主事件链、场景先后、因果关系、人物登场/退场与冲突结果须与参考原文一致；不是续写新书、不是扩写无关支线。\n"
+            "2) 仅允许「同一场内的放大描写」：对白、动作细部、环境声味、节奏；不得写入参考中未发生的关键事实。\n"
+            "3) 若领域圣经、作者长期意图、近期焦点、JSON 上下文或本章意图与参考原文冲突，一律以参考原文为准。\n"
+            "4) 不得新增改变本章走向的支线或替换结局。\n\n"
+        )
+    else:
+        strict_plot_contract = (
+            "【仿写（实验模式：上一段衔接可能来自已生成 output）】\n"
+            "本章主干仍以 input 参考为真：不得仅凭 output 衔接或 JSON 上下文编造与参考冲突的新主线、新结局或重要新角色。\n"
+            "允许：语气、对白颗粒、感官扩写；禁止：当作自由续写或另起故事。\n\n"
+        )
 
     # 获取核心角色和道具
     core_characters = current_context.get('core_characters', [])
@@ -352,25 +636,25 @@ def generate_chapter_content(
     ddd_block = ""
     if domain_text:
         ddd_block += (
-            f"【领域圣经 DDD（静态设定，优先级高）】\n"
-            f"以下内容为项目约定的世界观、术语与硬约束；与下文冲突时以本节为准，不得自相矛盾。\n\n"
+            f"【领域圣经 DDD（静态设定）】\n"
+            f"以下为世界观的术语与硬约束；**若与上方本章参考原文的情节、场次或因果冲突，以参考原文为准**；"
+            f"仅在不冲突时遵守本节，且不得与参考合读时自相矛盾。\n\n"
             f"{domain_text}\n\n"
         )
 
     # --- 核心创作要求 (共同部分) ---
     production_hard_rules = (
         f"【产出侧结构硬约束（必须执行）】\n"
-        f"1. **事件密度硬约束**：每 500-700 字必须出现一次不可逆变化（冲突升级/关系变化/代价落地/任务状态跃迁其一），"
-        f"禁止连续大段“解释世界/复盘策略/施工过程”替代剧情推进。\n"
-        f"2. **解释上限硬约束**：连续解释/判断型段落最多 2 段，第 3 段前必须插入动作对抗、意外反馈或人物交锋。\n"
-        f"3. **角色声纹硬约束**：至少两名核心角色呈现稳定差异化说话方式（句长、语气词、反问习惯或口癖），"
-        f"禁止全员同一书面腔。\n"
-        f"4. **开头/结尾反同构**：开篇入口与收束方式都要避免模板化；"
-        f"开头优先用动作或异常信息切入，结尾优先落在新变量/新压力，不用解释性总结句收尾。\n"
-        f"5. **拒绝任务清单文**：系统、建设、筹备类内容必须嵌入冲突和人物反应中呈现，"
-        f"禁止按“先做A再做B再做C”的说明书顺序平铺。\n"
-        f"6. **写前自检（只在脑内执行，不要输出）**："
-        f"“本段是否发生变化？”“是否在用解释代替戏剧？”“角色说话是否可被区分？”。\n\n"
+        f"1. **事件密度**：每 500-700 字须有一次不可逆变化（冲突升级/关系变化/代价落地/任务状态跃迁其一），"
+        f"禁止用大段「解释世界/复盘策略/施工流水账」代替剧情。\n"
+        f"2. **解释上限**：连续解释/判断型段落最多 2 段，其后必须插入动作、意外或人物交锋。\n"
+        f"3. **角色声纹**：至少两名核心角色在句长、语气词或口癖上稳定可区分，禁止全员书面腔。\n"
+        f"4. **开篇信息节奏（尤其无上一章时）**：前 700 字禁止用内心独白/旁白连续「打卡」交代穿越原因、系统功能表、世界观词条；"
+        f"设定只通过当下动作、半截对话、被打断的念头漏出，一次只漏一点。\n"
+        f"5. **反同构**：开头用动作或异常切入；结尾落在新变量或新压力，不用「总之/这一刻/他明白」式抽象收束。\n"
+        f"6. **拒绝清单体**：禁止把「本章意图/待回收线索」写成编号小节或目录句；系统与建设必须长在戏里，不要说明书顺序。\n"
+        f"7. **句式**：禁止连续三句长度与节奏几乎相同的陈述；每 400-600 字用环境声、动作或他人插话打断说明腔。\n"
+        f"8. **写前自检（脑内即可，禁止输出）**：本段有没有发生新变化？是不是在解释代替戏剧？\n\n"
     )
 
     implicit_two_phase_contract = (
@@ -387,37 +671,28 @@ def generate_chapter_content(
     )
 
     core_requirements = (
-        f"分析出的原文语言风格：\n{writing_style}\n\n"
+        f"{reference_block}"
+        f"{strict_plot_contract}"
+        f"【语言风格备忘（非提纲；禁止模仿下列编号、小标题或分析腔落笔）】\n{style_brief}\n\n"
         f"{current_context_summary}\n\n"
         f"{core_elements}\n\n"
         f"{ddd_block}"
-        f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}\n\n"
-        f"【近期焦点（优先于长期意图）】\n{current_focus_text if current_focus_text else '无'}\n\n"
+        f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}"
+        f"{'（严格模式下若与参考原文冲突则忽略）' if strict_source_plot else ''}\n\n"
+        f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}"
+        f"{'（严格模式下若与参考原文冲突则忽略）' if strict_source_plot else '（优先于长期意图）'}\n\n"
         f"【审计规则前置约束（写作时必须遵守）】\n{audit_requirements_text if audit_requirements_text else '无'}\n\n"
-        f"【本章意图规划（必须落实）】\n{chapter_plan_text if chapter_plan_text else '无（请按上下文自主规划）'}\n\n"
+        f"【本章意图（须融化进场景；不得脱离参考编造新主线）】\n"
+        f"{chapter_plan_text if chapter_plan_text else '无（仍须严格按本章参考原文的情节与场次写）'}\n\n"
         f"{implicit_two_phase_contract}"
         f"{production_hard_rules}"
         f"【核心创作要求】：\n"
-        f"1. **风格平衡**：保持原文的风格，但同时注重主线推进。\n"
-        f"2. **内容连贯**：严格维持剧情、角色性格和世界设定的连贯性。\n"
-        f"3. **主线推进**：每章应当推进主要剧情或角色发展，而不仅仅提供笑点，幽默应服务于情节而非喧宾夺主。\n"
-        f"4. **标题要求**：为第 {chapter_number} 章构思一个标题（格式：'第{chapter_number}章 标题内容...'），放在内容最开始。\n"
-        f"5. **字数要求**：生成约 {target_length} 字正文内容。\n"
-        f"6. **结构平衡**：保持对话、叙述和内心活动的平衡，不过分倚重单一表达方式。\n"
-        f"7. **领域设定一致性**：若上方提供了领域圣经，必须严格遵守；无法满足时优先删减次要描写，不得编造与圣经冲突的设定。\n"
-        f"8. **人味儿与反模板（降低「AI 腔」，与剧情要求同等重要）**：\n"
-        f"   - 句式长短必须错落，避免连续多句长度、节奏几乎相同；少用排比、对仗、三句一组的 slogan 式金句。\n"
-        f"   - 少用说明文收束：避免段尾高频出现「这一刻/总之/显然/不禁/他明白」类万能升华；允许信息不完整、留一点语意跳跃。\n"
-        f"   - 对话要有不同角色的口气与打断，避免所有人说话都像同一份标准书面语；可适度加入口语、半截话、停顿。\n"
-        f"   - 描写优先具体动作、物件与感官细节，少用抽象形容词和成语堆叠。\n"
-        f"   - 若有系统/提示播报，不要连续多条同一腔调的通知，用环境声、动作、角色吐槽或走神打断。\n"
-        f"   - 禁止整段「百科词条」「论文摘要」「产品说明书」语气；禁止列表式交代世界观（除非原作明显如此）。\n\n"
-        f"【88+ 执行型硬约束】\n"
-        f"- 禁止出现连续三句长度接近且节奏一致的陈述句（必须主动打散句长）。\n"
-        f"- 每 400-600 字至少出现一次“动作/环境干扰”来打断说明式叙述。\n"
-        f"- 每个关键场景至少落实一条可感知细节（动作、物件、触感、声响、气味其一）。\n"
-        f"- 对话段必须出现角色差异：至少一人使用口语短句或半句，避免全员书面腔。\n"
-        f"- 禁止在段尾连续使用总结性抽象句（如“他终于明白了”类收束）。\n\n"
+        f"1. **风格**：仿写像真人落笔；幽默从处境里长出来，不要为搞笑而堆梗。\n"
+        f"2. **连贯**：人物反应符合参考中的当下压力；设定与领域圣经一致且不与参考冲突。\n"
+        f"3. **标题**：第 {chapter_number} 章单行标题，格式 `# 第{chapter_number}章 …` 置于最前。\n"
+        f"4. **字数**：约 {target_length} 字；允许语意跳跃，不必写满「说明」才算完成。\n"
+        f"5. **表达**：对话/叙述/内心交替出现，但内心勿承担世界观说明书职能。\n"
+        f"6. **系统/UI**：用打断、误触、半句播报或动作衔接，避免连发同一腔调提示框。\n\n"
     )
 
     # 构建提示指令
@@ -425,24 +700,33 @@ def generate_chapter_content(
 
     # 根据是否有前文构建不同的提示指令
     if previous_chapter_content:
-        print(f"正在根据上一章内容、语言风格和全局上下文生成续写章节 {chapter_number}...")
-        # 截取上一章最后部分作为更直接的上下文
-        previous_ending = previous_chapter_content[-2000:] # 可调整长度
+        print(f"正在仿写第 {chapter_number} 章（带上一段衔接）…")
+        previous_ending = previous_chapter_content[-2000:]  # 可调整长度
+        cont_note = ""
+        if strict_source_plot:
+            cont_note = (
+                "【衔接说明】下列「上一章节选」来自 input 原作上一章（若曾回退则为 output，仍以本章参考为情节真值）。\n"
+            )
+        else:
+            cont_note = "【衔接说明】上一段可能来自 output；本章情节仍以 input 参考为准，不得据衔接段新编主线。\n"
         prompt_instruction = (
             core_requirements +
-            f"【续写特定要求】：\n"
-            f"1. **直接续写**：新章节必须从上一章的结尾处（如下）无缝衔接，直接延续情节。\n"
-            f"   上一章结尾片段：\n   ```\n   {previous_ending}\n   ```\n"
-            f"2. **情节推进**：在保持风格和连贯性的前提下，合理推进主线故事发展。\n"
-            f"3. **核心角色发展**：注重刻画核心角色的动机与成长。\n"
-            f"4. **情感深化**：循序渐进地增加人物情感和关系复杂性。\n"
+            f"【仿写衔接（仅连贯口语气与镜头，不另起故事）】：\n"
+            f"{cont_note}"
+            f"1. 正文从下列节选自然接入，时间线连续；不得引入参考中尚未出现的重大新因果。\n"
+            f"   上一章节选：\n   ```\n   {previous_ending}\n   ```\n"
+            f"2. 情绪与信息推进须落在本章参考原文已有的事件上，不得写成「续写下一本书」。\n"
+            f"3. 角色反应与参考一致，可扩写微表情与对白颗粒。\n"
+            f"4. 禁止为拉长篇幅而插入与参考无关的重要支线。\n"
         )
-    else:  # 生成开篇章节，通常是第一章
-        print(f"正在根据语言风格分析生成开篇第 {chapter_number} 章...")
+    else:
+        print(f"正在仿写第 {chapter_number} 章（无上一段衔接）…")
         prompt_instruction = (
             core_requirements +
-            f"【开篇特定要求】：\n"
-            f"1. 保持原文的风格和剧情。\n"
+            f"【仿写开篇】：\n"
+            f"1. 仅覆盖本章 input 参考中的情节与场次，不得改主线因果，也不是创作全新开篇故事。\n"
+            f"{'2. 不得跳过或调换参考中的关键场次。' if strict_source_plot else '2. 勿整段复述，可作对白与感官扩写。'}\n"
+            f"3. 从现场与动作进入，少用说明书式内心。\n"
         )
 
     prompt = prompt_instruction
@@ -450,9 +734,15 @@ def generate_chapter_content(
         {
             "role": "system",
             "content": (
-                "你是一位小说续写作家，用笔要像真人连载：语气有松有紧、句子有长有短，不要写成工整的范文。"
-                "若提示中含「领域圣经 DDD」，设定与术语仍须严格遵守，但落实方式要走剧情与细节，"
-                "不要用排比和总结句硬凑。"
+                "你是一位小说仿写作家：对照参考输出同一故事、同一场次的再叙述，语气有松有紧、句子有长有短，拒绝范文腔。"
+                "不是自由续写、不是扩写新故事线、不是同人另起炉灶；提示中的分析/意图是备忘，禁止把提示结构映射成新章节大纲。"
+                "若含「领域圣经 DDD」，不与参考冲突时遵守；冲突时以参考原文情节为准。"
+                "禁止用「心里咯噔一下/不禁/这一刻/显然」等万能情绪套话收束段落。"
+                + (
+                    " 当前为严格仿写：本章参考正文即情节真值，只可润色扩写，不可改戏。"
+                    if strict_source_plot
+                    else " 当前为仿写实验模式：衔接可能非原作，但本章主干仍以参考为准。"
+                )
             ),
         },
         {"role": "user", "content": prompt},
@@ -462,10 +752,10 @@ def generate_chapter_content(
     try:
         print(f"API 请求 (尝试 1/3): 模型={CHAPTER_GENERATION_MODEL}, 温度={CHAPTER_GENERATION_TEMPERATURE}")
         new_content = call_deepseek_api(
-            messages, 
-            CHAPTER_GENERATION_MODEL, 
-            max_tokens=target_length, 
-            temperature=CHAPTER_GENERATION_TEMPERATURE
+            messages,
+            CHAPTER_GENERATION_MODEL,
+            max_tokens=_chapter_completion_max_tokens(target_length),
+            temperature=CHAPTER_GENERATION_TEMPERATURE,
         )
         if not new_content:
             return None

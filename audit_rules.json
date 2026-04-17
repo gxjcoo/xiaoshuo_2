@@ -1,5 +1,7 @@
 {
   "pass_threshold": 85,
+  "deterministic_penalty_cap_total": 12,
+  "deterministic_penalty_cap_ai_trace": 10,
   "ai_trace_hard_threshold": 80,
   "hard_fail_threshold": 60,
   "max_revise_rounds": 3,
