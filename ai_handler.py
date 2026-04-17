@@ -281,8 +281,25 @@ def _call_ark_responses_api(messages, model, timeout, max_tokens=None, temperatu
         raise RuntimeError(f"Ark 返回中未提取到文本: {str(data)[:600]}")
 
 
+def _effective_response_format(response_format):
+    """豆包 Ark 多数 chat.completions 模型不支持 response_format=json_object，会返回 400。"""
+    if response_format is None:
+        return None
+    if LLM_PROVIDER != "doubao":
+        return response_format
+    if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+        if DEBUG_LLM_LOG:
+            print(
+                "[LLM DEBUG] doubao: 不传 response_format=json_object，改由提示词约束+解析 JSON",
+                flush=True,
+            )
+        return None
+    return response_format
+
+
 def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, response_format=None):
     """调用 LLM 的通用函数（DeepSeek / 豆包 Ark）。"""
+    response_format = _effective_response_format(response_format)
     timeout = httpx.Timeout(
         connect=API_HTTP_CONNECT_TIMEOUT,
         read=API_HTTP_READ_TIMEOUT,
@@ -643,32 +660,45 @@ def generate_chapter_content(
         )
 
     # --- 核心创作要求 (共同部分) ---
-    production_hard_rules = (
-        f"【产出侧结构硬约束（必须执行）】\n"
-        f"1. **事件密度**：每 500-700 字须有一次不可逆变化（冲突升级/关系变化/代价落地/任务状态跃迁其一），"
-        f"禁止用大段「解释世界/复盘策略/施工流水账」代替剧情。\n"
-        f"2. **解释上限**：连续解释/判断型段落最多 2 段，其后必须插入动作、意外或人物交锋。\n"
-        f"3. **角色声纹**：至少两名核心角色在句长、语气词或口癖上稳定可区分，禁止全员书面腔。\n"
-        f"4. **开篇信息节奏（尤其无上一章时）**：前 700 字禁止用内心独白/旁白连续「打卡」交代穿越原因、系统功能表、世界观词条；"
-        f"设定只通过当下动作、半截对话、被打断的念头漏出，一次只漏一点。\n"
-        f"5. **反同构**：开头用动作或异常切入；结尾落在新变量或新压力，不用「总之/这一刻/他明白」式抽象收束。\n"
-        f"6. **拒绝清单体**：禁止把「本章意图/待回收线索」写成编号小节或目录句；系统与建设必须长在戏里，不要说明书顺序。\n"
-        f"7. **句式**：禁止连续三句长度与节奏几乎相同的陈述；每 400-600 字用环境声、动作或他人插话打断说明腔。\n"
-        f"8. **写前自检（脑内即可，禁止输出）**：本段有没有发生新变化？是不是在解释代替戏剧？\n\n"
-    )
+    # 严格仿写时参考原文已是「节拍表」；再叠长条规则 + 两阶段契约，易诱发清单腔、工整句，抬高平台 AI 率。
+    if strict_source_plot:
+        production_hard_rules = (
+            f"【成文忌口（仿写专用，从简）】\n"
+            f"- 句长错落，少排比；对话两人以上时口气要能区分。\n"
+            f"- 少用段尾万能收束（总之/不禁/这一刻/他明白）；少连续内心说明书。\n"
+            f"- 系统提示用打断、半句、动作混进戏里，不要连发同一腔调通知框。\n"
+            f"- 情节跟着参考走即可，不要用「分析腔」复述上文规则。\n\n"
+        )
+    else:
+        production_hard_rules = (
+            f"【产出侧结构硬约束（必须执行）】\n"
+            f"1. **事件密度**：每 500-700 字须有一次不可逆变化（冲突升级/关系变化/代价落地/任务状态跃迁其一），"
+            f"禁止用大段「解释世界/复盘策略/施工流水账」代替剧情。\n"
+            f"2. **解释上限**：连续解释/判断型段落最多 2 段，其后必须插入动作、意外或人物交锋。\n"
+            f"3. **角色声纹**：至少两名核心角色在句长、语气词或口癖上稳定可区分，禁止全员书面腔。\n"
+            f"4. **开篇信息节奏（尤其无上一章时）**：前 700 字禁止用内心独白/旁白连续「打卡」交代穿越原因、系统功能表、世界观词条；"
+            f"设定只通过当下动作、半截对话、被打断的念头漏出，一次只漏一点。\n"
+            f"5. **反同构**：开头用动作或异常切入；结尾落在新变量或新压力，不用「总之/这一刻/他明白」式抽象收束。\n"
+            f"6. **拒绝清单体**：禁止把「本章意图/待回收线索」写成编号小节或目录句；系统与建设必须长在戏里，不要说明书顺序。\n"
+            f"7. **句式**：禁止连续三句长度与节奏几乎相同的陈述；每 400-600 字用环境声、动作或他人插话打断说明腔。\n"
+            f"8. **写前自检（脑内即可，禁止输出）**：本段有没有发生新变化？是不是在解释代替戏剧？\n\n"
+        )
 
-    implicit_two_phase_contract = (
-        f"【隐式两阶段写作契约（强制）】\n"
-        f"你必须先在内部完成“结构计划”，再写正文；但结构计划属于隐式推理，不得出现在输出中。\n"
-        f"阶段A（内部静默规划，不输出）：\n"
-        f"- 先为本章规划 4-7 个叙事节拍（每个节拍必须有事件变化）\n"
-        f"- 标注每个节拍的冲突点、信息释放点、角色声纹策略\n"
-        f"- 规划开头入口和结尾落点，确保不与近章同构\n"
-        f"阶段B（仅输出正文）：\n"
-        f"- 严格按阶段A的节拍写作，但语言自然，不要像提纲复述\n"
-        f"- 禁止输出任何计划痕迹：如“节拍1/阶段A/结构计划/写作意图/自检”等字样\n"
-        f"- 最终输出只能是章节标题+正文，不得包含解释、注释、清单、表格\n\n"
-    )
+    if strict_source_plot:
+        implicit_two_phase_contract = ""
+    else:
+        implicit_two_phase_contract = (
+            f"【隐式两阶段写作契约（强制）】\n"
+            f"你必须先在内部完成“结构计划”，再写正文；但结构计划属于隐式推理，不得出现在输出中。\n"
+            f"阶段A（内部静默规划，不输出）：\n"
+            f"- 先为本章规划 4-7 个叙事节拍（每个节拍必须有事件变化）\n"
+            f"- 标注每个节拍的冲突点、信息释放点、角色声纹策略\n"
+            f"- 规划开头入口和结尾落点，确保不与近章同构\n"
+            f"阶段B（仅输出正文）：\n"
+            f"- 严格按阶段A的节拍写作，但语言自然，不要像提纲复述\n"
+            f"- 禁止输出任何计划痕迹：如“节拍1/阶段A/结构计划/写作意图/自检”等字样\n"
+            f"- 最终输出只能是章节标题+正文，不得包含解释、注释、清单、表格\n\n"
+        )
 
     core_requirements = (
         f"{reference_block}"

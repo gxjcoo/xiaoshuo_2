@@ -69,29 +69,35 @@ def anti_ai_rewrite_with_reference(
         if lines:
             findings_text = "【规则命中（必须优先修复）】\n" + "\n".join(lines) + "\n\n"
 
+    style_snip = (writing_style or "").strip()
+    if len(style_snip) > 1400:
+        style_snip = style_snip[:1400] + "\n…（风格分析已截断）"
+
     prompt = (
         f"请对第 {chapter_number} 章做一次“保剧情、不改设定”的去模板化改写，以降低 AI 痕迹。\n"
         f"硬要求：\n"
         f"1) 不改变主事件、人物关系、世界设定、章节目标。\n"
         f"2) 主要修表达层：句长错落、减少说明文收束、减少工整排比。\n"
-        f"3) 对话更口语化，允许打断、半句、停顿。\n"
-        f"4) 增加动作/感官细节，减少抽象总结。\n"
-        f"5) 必须优先修复【规则命中】中的问题，逐项消除。\n"
-        f"6) 仅输出修订后的完整章节。\n\n"
+        f"3) 对话更口语化，允许打断、半句、停顿、抢话、说一半咽回去。\n"
+        f"4) 增加动作/感官细节，减少抽象总结；允许略「糙」、略碎，不要润成光滑范文。\n"
+        f"5) 刻意制造几处短段、一声一动的顿挫，少用「然而/因此/这一刻」类连接与收束。\n"
+        f"6) 必须优先修复【规则命中】中的问题，逐项消除。\n"
+        f"7) 仅输出修订后的完整章节。\n\n"
         f"{findings_text}"
         f"【原文风格参考片段】\n{(reference_text or '')[:2500]}\n\n"
         f"【风格差异对比(JSON)】\n{json.dumps(style_compare, ensure_ascii=False, indent=2)}\n\n"
-        f"【既有风格分析】\n{writing_style}\n\n"
+        f"【既有风格分析（节选）】\n{style_snip if style_snip else '无'}\n\n"
         f"【本章意图规划】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
-        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
+        f"【领域圣经】\n{(domain_text or '')[:1800] if domain_text else '无'}\n\n"
         f"【待改写章节】\n{chapter_content}"
     )
     messages = [
         {
             "role": "system",
             "content": (
-                "你是资深网文改稿编辑。你的任务是保留剧情骨架，降低模板腔、说明腔和重复句式。"
-                "参考原文语感进行局部重写，不要写成教科书。"
+                "你是资深网文改稿编辑：保留剧情骨架，专门打掉模板腔、说明腔、排比与段尾万能升华。"
+                "改完要像人在连载站点直接发章——允许碎、糙、打断，不要改成语文阅读题标准答案。"
+                "参考原文片段只借语感与节奏，不要全文仿句式堆砌。"
             ),
         },
         {"role": "user", "content": prompt},
@@ -100,7 +106,7 @@ def anti_ai_rewrite_with_reference(
         messages,
         model,
         max_tokens=len(chapter_content) + 1200,
-        temperature=0.55,
+        temperature=0.62,
     )
     if not rewritten:
         return chapter_content

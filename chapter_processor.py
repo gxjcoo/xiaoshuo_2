@@ -11,6 +11,9 @@ from config import (
     MAX_RUNTIME_CHAPTER_ARTIFACTS,
     MAX_RUNTIME_INTENT_CHARS,
     MAX_RUNTIME_CONTEXT_SNAPSHOT_BYTES,
+    MAX_DOMAIN_STRICT_CHARS,
+    MAX_AUTHOR_STRICT_CHARS,
+    MAX_FOCUS_STRICT_CHARS,
 )
 from context_manager import get_current_context, update_story_context_after_chapter
 from ai_handler import analyze_writing_style, plan_chapter_with_ai, generate_chapter_content
@@ -207,11 +210,16 @@ def load_audit_rules():
         return default_rules
 
 
-def build_audit_requirements_for_writing(audit_rules, top_k=6):
-    """将审计规则转为写作前约束，提升首稿命中率。"""
+def build_audit_requirements_for_writing(audit_rules, top_k=6, strict_imitation=False):
+    """将审计规则转为写作前约束，提升首稿命中率。
+
+    strict_imitation: 仅取权重最高的少量维度、每条只保留首条要求，减轻提示「清单感」以降低 AI 腔。
+    """
     dimensions = audit_rules.get("dimensions", [])
     if not isinstance(dimensions, list) or not dimensions:
         return ""
+    if strict_imitation:
+        top_k = min(top_k, 3)
     ranked = sorted(
         [d for d in dimensions if isinstance(d, dict)],
         key=lambda d: float(d.get("weight", 0)),
@@ -223,7 +231,10 @@ def build_audit_requirements_for_writing(audit_rules, top_k=6):
         reqs = dim.get("requirements", [])
         if not isinstance(reqs, list) or not reqs:
             continue
-        req_text = "；".join(str(r).strip() for r in reqs if str(r).strip())
+        if strict_imitation:
+            req_text = str(reqs[0]).strip() if reqs else ""
+        else:
+            req_text = "；".join(str(r).strip() for r in reqs if str(r).strip())
         if req_text:
             lines.append(f"- {name}：{req_text}")
     return "\n".join(lines)
@@ -354,11 +365,18 @@ def process_chapter(chapter_number, input_dir, output_dir, length, strict_source
     # 3. 获取当前上下文
     current_context = get_current_context()
     audit_rules = load_audit_rules()
-    audit_requirements_text = build_audit_requirements_for_writing(audit_rules)
+    audit_requirements_text = build_audit_requirements_for_writing(
+        audit_rules, strict_imitation=strict_source_plot
+    )
 
-    domain_text = load_story_domain_text()
-    author_intent_text = load_author_intent_text()
-    current_focus_text = load_current_focus_text()
+    if strict_source_plot:
+        domain_text = load_story_domain_text(max_chars=MAX_DOMAIN_STRICT_CHARS)
+        author_intent_text = load_author_intent_text(max_chars=MAX_AUTHOR_STRICT_CHARS)
+        current_focus_text = load_current_focus_text(max_chars=MAX_FOCUS_STRICT_CHARS)
+    else:
+        domain_text = load_story_domain_text()
+        author_intent_text = load_author_intent_text()
+        current_focus_text = load_current_focus_text()
     if domain_text:
         print("已加载领域圣经 (story_domain/*.md) 并注入生成提示。")
     if author_intent_text:

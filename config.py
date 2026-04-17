@@ -59,6 +59,10 @@ AUDIT_RULES_FILE = 'audit_rules.json'
 MAX_DOMAIN_PROMPT_CHARS = 8000
 MAX_AUTHOR_INTENT_CHARS = 3000
 MAX_CURRENT_FOCUS_CHARS = 2000
+# 严格仿写（STRICT_SOURCE_PLOT）时进一步压缩，减轻「说明书」式上下文抬高 AI 率
+MAX_DOMAIN_STRICT_CHARS = int(os.environ.get("MAX_DOMAIN_STRICT_CHARS", "3400"))
+MAX_AUTHOR_STRICT_CHARS = int(os.environ.get("MAX_AUTHOR_STRICT_CHARS", "900"))
+MAX_FOCUS_STRICT_CHARS = int(os.environ.get("MAX_FOCUS_STRICT_CHARS", "480"))
 
 # --- 上下文管理配置 ---
 # 长连载增强：提高上下文目标上限，减少中后期被动裁剪导致的遗忘
@@ -105,7 +109,7 @@ CONTEXT_ANALYSIS_TEMPERATURE = 0.05
 
 # 生成章节温度：过低时句式易过于整齐，易被各平台判为「AI 特征偏高」。
 # 默认略调高以增加错落感；需要更稳的输出可设环境变量 CHAPTER_GENERATION_TEMPERATURE=0.2
-CHAPTER_GENERATION_TEMPERATURE = float(os.environ.get("CHAPTER_GENERATION_TEMPERATURE", "0.55"))
+CHAPTER_GENERATION_TEMPERATURE = float(os.environ.get("CHAPTER_GENERATION_TEMPERATURE", "0.58"))
 # 章节期望字数由 --length 控制；实际 API 的 max_tokens 在 ai_handler 中按字数换算（中文约 2 token/字），勿把字数直接当 max_tokens。
 
 # 风格分析时的参数

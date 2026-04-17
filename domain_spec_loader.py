@@ -11,8 +11,11 @@ from config import (
 )
 
 
-def load_story_domain_text(domain_dir=None):
-    """读取 story_domain 下所有 .md（排除 _ 前缀），按文件名排序拼接。"""
+def load_story_domain_text(domain_dir=None, max_chars=None):
+    """读取 story_domain 下所有 .md（排除 _ 前缀），按文件名排序拼接。
+
+    max_chars: 覆盖默认 MAX_DOMAIN_PROMPT_CHARS，用于严格仿写等场景压缩注入。
+    """
     base = domain_dir or STORY_DOMAIN_DIR
     if not os.path.isdir(base):
         return ""
@@ -40,8 +43,10 @@ def load_story_domain_text(domain_dir=None):
         return ""
 
     full = "\n\n".join(parts)
-    if len(full) > MAX_DOMAIN_PROMPT_CHARS:
-        full = full[:MAX_DOMAIN_PROMPT_CHARS] + "\n\n…（领域文本已按长度截断）"
+    cap = int(max_chars) if max_chars is not None else MAX_DOMAIN_PROMPT_CHARS
+    cap = max(500, cap)
+    if len(full) > cap:
+        full = full[:cap] + "\n\n…（领域文本已按长度截断）"
     return full
 
 
@@ -59,13 +64,15 @@ def _load_optional_text_file(path, max_chars, label):
     return text
 
 
-def load_author_intent_text(path=None):
-    """读取作者长期意图文档 author_intent.md。"""
+def load_author_intent_text(path=None, max_chars=None):
+    """读取作者长期意图文档 author_intent.md。max_chars 默认 MAX_AUTHOR_INTENT_CHARS。"""
     target = path or AUTHOR_INTENT_FILE
-    return _load_optional_text_file(target, MAX_AUTHOR_INTENT_CHARS, "author_intent")
+    cap = int(max_chars) if max_chars is not None else MAX_AUTHOR_INTENT_CHARS
+    return _load_optional_text_file(target, max(200, cap), "author_intent")
 
 
-def load_current_focus_text(path=None):
-    """读取近 1-3 章焦点文档 current_focus.md。"""
+def load_current_focus_text(path=None, max_chars=None):
+    """读取近 1-3 章焦点文档 current_focus.md。max_chars 默认 MAX_CURRENT_FOCUS_CHARS。"""
     target = path or CURRENT_FOCUS_FILE
-    return _load_optional_text_file(target, MAX_CURRENT_FOCUS_CHARS, "current_focus")
+    cap = int(max_chars) if max_chars is not None else MAX_CURRENT_FOCUS_CHARS
+    return _load_optional_text_file(target, max(200, cap), "current_focus")
