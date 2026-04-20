@@ -99,5 +99,4 @@ python app.py --input_dir 1-50 --output_dir output_chapters --chapter 1 --length
 - 拆分数量异常：先检查原文章节标题格式是否规范
 - 某一章未识别：可提供原文片段，按实际格式补充识别规则
 
-
 https://matrix.tencent.com/ai-detect/ai_gen_txt
