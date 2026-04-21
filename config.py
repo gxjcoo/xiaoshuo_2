@@ -46,8 +46,8 @@ API_HTTP_READ_TIMEOUT = float(os.environ.get("API_HTTP_READ_TIMEOUT", "300"))
 # 文件路径
 CONTEXT_FILE = 'story_context.json'
 PRUNED_ARCHIVE_FILE = 'pruned_context_archive.json'
-DEFAULT_INPUT_DIR = '1-50' # 默认原始章节输入目录
-DEFAULT_OUTPUT_DIR = 'output_chapters' # 默认生成章节输出目录
+DEFAULT_INPUT_DIR = 'input_chapters'  # 默认参考章目录（用户自备 numbered .md）
+DEFAULT_OUTPUT_DIR = 'output_chapters'  # 默认生成输出目录
 
 # DDD：静态领域目录（相对项目工作目录）
 STORY_DOMAIN_DIR = 'story_domain'

@@ -1,5 +1,6 @@
 import os
 import re
+import argparse
 
 def chinese_to_arabic(chinese_num_str):
     chinese_num_map = {
@@ -57,8 +58,10 @@ def process_filename(filename):
     
     return f"{num}.md"
 
-def main():
-    dir_path = 'all'
+def main(dir_path):
+    if not os.path.isdir(dir_path):
+        print(f"错误：目录不存在: {dir_path}")
+        return
     for filename in os.listdir(dir_path):
         if filename.endswith('.md'):
             new_name = process_filename(filename)
@@ -75,4 +78,12 @@ def main():
                 print(f"Skipped file: {filename}")
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description="将章节文件名中的中文序数等转为阿拉伯数字编号")
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default="chapters_out",
+        help="要处理的目录（默认 chapters_out）",
+    )
+    args = parser.parse_args()
+    main(args.directory)

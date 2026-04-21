@@ -1,5 +1,6 @@
 import os
 import re
+import argparse
 
 def natural_sort_key(s):
     """Helper function for natural sorting (e.g., 1, 2, 10 instead of 1, 10, 2)."""
@@ -46,13 +47,19 @@ def combine_chapters(input_dir, output_file):
         print(f"合并过程中发生错误: {e}")
 
 if __name__ == '__main__':
-    input_directory = 'output_chapters_v2'  # 输入目录名
-    output_filename = 'combined_novel_v2.md' # 输出文件名
-    
-    # 确保输出文件路径是相对于脚本位置的，或者使用绝对路径
+    parser = argparse.ArgumentParser(description="将目录内章节 .md 按文件名自然序合并为一个文件")
+    parser.add_argument(
+        "input_dir",
+        help="章节所在目录（内含 1.md、2.md …）",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="combined.md",
+        help="合并输出文件路径（默认 combined.md）",
+    )
+    args = parser.parse_args()
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_filepath = os.path.join(script_dir, output_filename)
-    input_dir_path = os.path.join(script_dir, input_directory)
-
-
+    input_dir_path = args.input_dir if os.path.isabs(args.input_dir) else os.path.join(script_dir, args.input_dir)
+    output_filepath = args.output if os.path.isabs(args.output) else os.path.join(script_dir, args.output)
     combine_chapters(input_dir_path, output_filepath)

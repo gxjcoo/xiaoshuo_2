@@ -1,102 +1,60 @@
-# 小说处理项目说明
+# 小说章节仿写工具（逻辑骨架）
 
-这是一个用于小说章节处理与生成的 Python 项目，当前包含两类常用能力：
+用于：长篇 `txt` 切章、对照参考章调用 LLM 仿写、审计与修订闭环。  
+**本仓库分支不含任何具体小说正文**，剧情与设定由你本地放入 `input_chapters/`、`story_domain/` 等目录。
 
-- 章节拆分：把一个长篇 `txt` 按章节自动切分为多个 `md` 文件
-- 章节生成主流程：基于输入章节，按设定生成输出章节（`app.py`）
-
-## 1. 环境准备
-
-建议使用 Python 3.10+（推荐 3.12）。
-
-在项目根目录执行：
+## 环境
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 2. 项目主要文件
-
-- `split_novel.py`：章节拆分脚本
-- `app.py`：章节处理/生成主入口
-- `1.txt`：示例原始小说文本
-- `all/`：默认章节拆分输出目录
-- `output_chapters/`：常见生成输出目录（按你的参数可调整）
-
-## 3. 章节拆分（split_novel.py）
-
-### 默认用法
+复制环境变量模板（勿把真实 Key 提交到 Git）：
 
 ```bash
-python split_novel.py
+cp .env.example .env
+# 编辑 .env 填入 API Key 等
 ```
 
-默认行为：
+## 目录约定（运行时自建亦可）
 
-- 读取：`1.txt`
-- 输出到：`all/`
-- 文件名为连续编号：`1.md`、`2.md`、`3.md`...
+| 路径 | 说明 |
+| --- | --- |
+| `input_chapters/` | 参考章：`1.md`、`2.md` …（自备） |
+| `output_chapters/` | 生成输出（默认） |
+| `chapters_out/` | `split_novel.py` 默认切章输出 |
+| `story_domain/` | 领域圣经模板（可填） |
+| `author_intent.md` / `current_focus.md` | 意图模板（可填） |
+| `runtime/`、`story_context.json` | 运行态（生成时出现，已在 `.gitignore`） |
 
-### 当前识别规则说明
-
-脚本会识别类似以下章节标题（支持行首和行内）：
-
-- `第1章 xxx`
-- `第十二章 xxx`
-- `第3回：xxx`
-- `第4节 xxx`
-
-并且已经避免把普通正文句子（如“第一回的结尾……”）误判为新章节。
-
-### 自定义输入/输出（可改脚本末尾）
-
-在 `split_novel.py` 末尾修改：
-
-```python
-if __name__ == "__main__":
-    input_file = "1.txt"
-    output_directory = "all"
-    split_novel_to_chapters(input_file, output_directory)
-```
-
-## 4. 启动主流程（app.py）
-
-### 基础运行
+## 切章
 
 ```bash
-python app.py --input_dir 1-50 --output_dir output_chapters
+python split_novel.py path/to/novel.txt -o chapters_out
 ```
 
-### 第1章到第10章
+## 仿写主流程
 
 ```bash
-python app.py --input_dir all --output_dir output_chapters --start_chapter 1 --end_chapter 10
+python app.py --input_dir input_chapters --output_dir output_chapters --start_chapter 1 --end_chapter 10
 ```
 
-### 常用参数
+常用：`--chapter N`、`--length 3000`、`--no_strict_source_plot`（实验模式）。
 
-- `--chapter 10`：只处理第 10 章
-- `--start_chapter 1 --end_chapter 20`：处理范围章节
-- `--length 3000`：控制目标字数
-- `--no_strict_source_plot`：关闭严格仿写（实验模式）
-
-示例：
+## 辅助脚本
 
 ```bash
-python app.py --input_dir 1-50 --output_dir output_chapters --chapter 1 --length 2500
+python combine_chapters.py input_chapters -o combined.md
+python rename_chapters.py chapters_out
 ```
 
-## 5. 推荐工作流
+## 配置说明
 
-1. 先用 `split_novel.py` 把 `txt` 切成章节 `md`
-2. 检查切分结果（如 `all/1.md`、`all/2.md`）
-3. 选择章节目录作为 `app.py` 的 `--input_dir`
-4. 运行生成流程并检查 `--output_dir` 结果
+- 提供商与模型：`config.py` + `.env`（`LLM_PROVIDER`、`DEEPSEEK_*`、`DOUBAO_*` 等）
+- 审计门槛：见 `audit_rules.json`，可用环境变量覆盖（见 `config.py` 中 `AUDIT_*`）
 
-## 6. 常见问题
+## 常见问题
 
-- 输出结果乱码：通常是终端编码显示问题，文件本身一般正常
-- 拆分数量异常：先检查原文章节标题格式是否规范
-- 某一章未识别：可提供原文片段，按实际格式补充识别规则
-
-https://matrix.tencent.com/ai-detect/ai_gen_txt
+- **切章数为 0**：检查正文里是否为 `第N章 标题` 形式（章后须有空格或冒号再接标题）。
+- **DeepSeek 连接失败**：增大 `API_MAX_RETRIES`、`API_HTTP_READ_TIMEOUT`；或换 `LLM_PROVIDER=doubao`。
+- **换书后上下文串台**：删除本地 `story_context.json`、`runtime/`、`pruned_context_archive.json` 后重跑。

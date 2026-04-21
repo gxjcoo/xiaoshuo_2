@@ -1,5 +1,6 @@
 import re
 import os
+import argparse
 
 def sanitize_filename(filename):
     """Removes characters that are invalid in Windows filenames."""
@@ -104,6 +105,19 @@ def split_novel_to_chapters(input_filepath, output_dir):
         print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
-    input_file = "1.txt"  # Assumes the input file is in the same directory as the script
-    output_directory = "all"
-    split_novel_to_chapters(input_file, output_directory)
+    parser = argparse.ArgumentParser(
+        description="将 UTF-8 整本小说 .txt 按章节标题切分为编号 1.md、2.md …"
+    )
+    parser.add_argument(
+        "input_file",
+        help="输入小说路径，例如 novel.txt",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="chapters_out",
+        dest="output_directory",
+        help="输出目录（默认 chapters_out）",
+    )
+    args = parser.parse_args()
+    split_novel_to_chapters(args.input_file, args.output_directory)
