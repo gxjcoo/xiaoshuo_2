@@ -9,9 +9,6 @@ runtime/
 
 # 用户数据与生成物（剧情与输出不入库）
 input_chapters/
-output_chapters/
-chapters_out/
-all/
 combined.md
 *.txt
 !requirements.txt
