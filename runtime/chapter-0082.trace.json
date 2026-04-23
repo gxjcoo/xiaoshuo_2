@@ -1,11 +1,11 @@
 {
-  "chapter": 45,
+  "chapter": 82,
   "strict_source_plot": true,
   "has_domain_text": true,
   "has_author_intent": true,
   "has_current_focus": true,
-  "audit_score": 92,
+  "audit_score": 93,
   "audit_passed": true,
-  "reference_file": "all\\45.md",
-  "output_file": "output_chapters\\45.md"
+  "reference_file": "all\\82.md",
+  "output_file": "output_chapters\\82.md"
 }
