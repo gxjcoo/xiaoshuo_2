@@ -8,7 +8,6 @@ pruned_context_archive.json
 runtime/
 
 # 用户数据与生成物（剧情与输出不入库）
-input_chapters/
 combined.md
 *.txt
 !requirements.txt
