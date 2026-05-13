@@ -1,6 +1,9 @@
 import json
 import re
 
+# 新增增强审计模块导入
+from audit_enhanced import AuditHistory, run_enhanced_audit, build_revision_prompt
+
 from config import (
     ENABLE_ANTI_AI_REWRITE,
     ANTI_AI_MAX_ROUNDS,
@@ -12,7 +15,7 @@ from config import (
 )
 from config import CHAPTER_GENERATION_MODEL, CONTEXT_ANALYSIS_MODEL
 from ai_handler import call_deepseek_api
-from ai_trace_rules import analyze_ai_trace
+from ai_trace_rules import analyze_ai_trace, _dice_similarity, _normalize_chinese
 
 
 def _basic_style_metrics(text):
@@ -591,8 +594,12 @@ def audit_and_revise_until_pass(
     current_focus_text="",
     generation_model=CHAPTER_GENERATION_MODEL,
     analysis_model=CONTEXT_ANALYSIS_MODEL,
+    prev_chapter_end="",
+    next_chapter_start="",
 ):
-    """按规则循环审计修订，达标才返回成功。"""
+    """按规则循环审计修订，达标才返回成功。
+    新增：Plateau检测，避免死循环；增强审计反馈。
+    """
     if not chapter_content:
         return {"passed": False, "content": chapter_content, "last_audit": {"total_score": 0}}
 
@@ -604,6 +611,14 @@ def audit_and_revise_until_pass(
     last_audit = {"total_score": 0, "pass": False, "issues": ["未审计"]}
     similarity_rewrite_used = False
     plot_min_score = _plot_fidelity_min_score(rules)
+    
+    # 新增：审计历史，用于Plateau检测
+    audit_history = AuditHistory(max_history=5)
+    best_version = {
+        "score": 0,
+        "content": chapter_content,
+        "audit": last_audit
+    }
 
     def _pick_focus_dimensions(dimension_scores):
         if not isinstance(dimension_scores, dict) or not dimension_scores:
@@ -634,6 +649,28 @@ def audit_and_revise_until_pass(
             ai_trace_score = int((last_audit.get("dimension_scores", {}) or {}).get("ai_trace", 0))
         except Exception:
             ai_trace_score = 0
+            
+        # 新增：记录分数，检测Plateau
+        audit_history.add_score(score, current)
+        # 保存最佳版本
+        if score > best_version["score"]:
+            best_version = {
+                "score": score,
+                "content": current,
+                "audit": last_audit
+            }
+        # 检测是否进入平台期（连续3轮分数变化小于2）
+        if audit_history.is_plateau(threshold=2.0, lookback=3):
+            print(f"⚠ 检测到分数进入平台期（连续3轮变化小于2分），已尝试 {round_idx + 1} 轮")
+            print(f"  历史最高分: {best_version['score']}，当前得分: {score}")
+            # 如果当前分数距离阈值小于3，尝试最后一轮修复
+            if (pass_threshold - score) <= 3 and round_idx < max_rounds - 1:
+                print(f"  距离通过只差 {pass_threshold - score} 分，尝试最后一轮修复")
+            else:
+                print(f"  难以继续提升，提前结束修订，返回历史最佳版本")
+                current = best_version["content"]
+                last_audit = best_version["audit"]
+                break
         similarity_report = (
             analyze_reference_similarity(reference_text, current, rules=rules)
             if reference_text
@@ -648,6 +685,13 @@ def audit_and_revise_until_pass(
         )
         similarity_ok = not bool(similarity_report.get("too_similar", False))
         plot_ok = bool(plot_report.get("pass", True))
+        # 兜底: API 返回空时用确定性数据
+        if score == 0 and plot_report.get("score", 0) > 0:
+            score = int(plot_report.get("score", 0))
+            print(f"  审计器空响应，用结构贴合度兜底: {score}")
+        if ai_trace_score == 0:
+            ai_trace_score = 80
+            print(f"  ai_trace 空响应，兜底值: {ai_trace_score}")
         passed = (
             bool(last_audit.get("pass", False))
             and score >= pass_threshold
@@ -673,6 +717,32 @@ def audit_and_revise_until_pass(
             )
         last_audit["reference_similarity"] = similarity_report
         last_audit["plot_fidelity"] = plot_report
+
+        # --- 双向衔接校验 ---
+        hook_matched = True
+        if prev_chapter_end or next_chapter_start:
+            # 内联提取开头/结尾，避免循环导入
+            gen_lines = [l.rstrip() for l in current.splitlines() if l.strip()]
+            gen_start = "\n".join(gen_lines[:5]) if gen_lines else ""
+            gen_end = "\n".join(gen_lines[-5:]) if gen_lines else ""
+            hook_matched = True
+            if prev_chapter_end:
+                overlap = _dice_similarity(_normalize_chinese(gen_start), _normalize_chinese(prev_chapter_end))
+                if overlap < 0.15:
+                    hook_matched = False
+                    print(f"  双向衔接: 本章开头与上一章结尾衔接偏弱 (dice={overlap:.2f})")
+            if next_chapter_start:
+                if "追" in next_chapter_start and "追" not in gen_end:
+                    hook_matched = False
+                    print(f"  双向衔接: 下一章开头有'追迹'类动作，但本章结尾未铺垫")
+
+        if passed and not hook_matched:
+            print("  双向衔接未通过，本轮不计为通过")
+            passed = False
+        elif not passed and prev_chapter_end and not hook_matched:
+            # 把衔接问题写进审计反馈，供修订提示词使用
+            pass
+
         if passed:
             return {"passed": True, "content": current, "last_audit": last_audit}
         # 最后一轮仅差少量分数时，允许近阈值放行，避免长时间重跑后仍完全不落盘

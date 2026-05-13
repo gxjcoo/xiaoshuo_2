@@ -39,6 +39,125 @@ output_chapters/N.md
 
 默认启用严格结构适配模式：结构功能以 `input_chapters/` 中的参考章抽取出的结构骨架为准，上一章衔接优先使用 input 原作上一章，不把生成稿自动反写进 `story_domain/`。如需实验性自由改编，可使用 `--no_strict_structure_adaptation`（旧参数 `--no_strict_plot_fidelity`、`--no_strict_source_plot` 仍兼容）。
 
+---
+
+## 新增核心模块（可选使用）
+
+项目新增了 4 个核心增强模块，解决原有流程中的痛点：
+
+| 痛点 | 新增模块 | 解决的问题 |
+|------|----------|-----------|
+| 结构骨架格式不稳定 | `structured_types.py` + `outline_extractor.py` | 用 JSON Schema 强制结构化 AST |
+| 审计反馈模糊（「连贯性不够」） | `audit_enhanced.py` | 具体位置 + 修改建议 + Plateau 检测 |
+| 上下文容易忘记角色设定 | `StoryKnowledgeBase` (in `structured_types.py`) | 知识库 + 实体归一 |
+| AI 痕迹只看表面词 | `ai_trace_enhanced.py` | 句子/段落长度分布统计分析 |
+
+---
+
+## 新功能快速上手
+
+### 1. 提取结构化骨架（可选）
+
+```python
+from outline_extractor import (
+    extract_structured_outline_from_reference,
+    build_generation_prompt_from_outline,
+)
+
+outline = extract_structured_outline_from_reference(
+    reference_text,
+    chapter_number=1,
+    strict_source_plot=True,
+)
+# outline.scenes 是结构化的场景列表
+# outline.chapter_goal, outline.core_conflict...
+
+# 然后可以用它构建生成提示词
+prompt = build_generation_prompt_from_outline(
+    outline,
+    writing_style,
+    story_context,
+    domain_spec,
+    chapter_number=1,
+)
+```
+
+### 2. 使用增强审计（可选）
+
+```python
+from audit_enhanced import (
+    run_enhanced_audit,
+    build_revision_prompt,
+    AuditHistory,
+    format_audit_summary,
+)
+
+# 审计历史追踪，用于 Plateau 检测
+history = AuditHistory()
+
+# 运行增强审计
+audit_result = run_enhanced_audit(
+    generated_text,
+    dimension_scores,
+    pass_threshold=85.0,
+    reference_text=reference_text,
+    history=history,
+)
+
+# audit_result.feedback_items 是具体的修改建议
+print(format_audit_summary(audit_result))
+
+# 构建修订提示词
+if audit_result.should_revise and not audit_result.plateau_detected:
+    revise_prompt = build_revision_prompt(generated_text, audit_result)
+```
+
+### 3. 使用知识库管理上下文（可选）
+
+```python
+from structured_types import (
+    StoryKnowledgeBase,
+    CharacterState,
+    Conflict,
+    ItemInfo,
+)
+
+kb = StoryKnowledgeBase()
+
+# 添加角色
+kb.add_character(CharacterState(
+    name="宝寿道长",
+    aliases=["年轻道士", "他"],
+    current_goal="赚够钱建道观",
+    current_emotion="calm",
+))
+
+# 添加钩子
+kb.add_hook("小熊似乎藏着什么秘密")
+
+# 生成提示词用的上下文摘要
+print(kb.to_context_prompt())
+
+# 保存/加载
+kb_json = kb.to_json()
+kb2 = StoryKnowledgeBase.from_json(kb_json)
+```
+
+### 4. 增强 AI 痕迹检测（可选）
+
+```python
+from ai_trace_enhanced import (
+    enhanced_ai_trace_analysis,
+    format_ai_trace_report,
+)
+
+analysis = enhanced_ai_trace_analysis(generated_text)
+print(format_ai_trace_report(analysis))
+
+# analysis["combined_score"] 是综合得分（0-100，越高越像 AI）
+# analysis["statistical_details"] 包含句子长度 CV、段落长度 CV 等
+```
+
 ## 环境
 
 ```bash
@@ -76,6 +195,17 @@ cp .env.example .env
 | `domain_spec_loader.py` | 加载 `story_domain/*.md`、`author_intent.md`、`current_focus.md` |
 | `knowledge_sync.py` | 实验模式下从生成章节提取可沉淀到领域文档的增量信息 |
 | `config.py` | 配置中心，读取 `.env` 并定义模型、路径、审计和上下文参数 |
+
+---
+
+## 新增模块（增强功能）
+
+| 文件 | 职责 | 优先级 |
+| --- | --- | --- |
+| `structured_types.py` | 结构化类型：SceneNode, ChapterOutline, AuditFeedbackItem, StoryKnowledgeBase | P0 |
+| `outline_extractor.py` | 结构化骨架提取 + 生成提示词构建 | P0 |
+| `audit_enhanced.py` | 增强审计：可操作的 diff 反馈 + Plateau 检测 | P0 |
+| `ai_trace_enhanced.py` | 增强 AI 痕迹检测：统计分布对比 | P1 |
 
 ## 数据与运行产物
 
@@ -136,3 +266,15 @@ python rename_chapters.py chapters_out
 - **切章数为 0**：检查正文里是否为 `第N章 标题` 形式（章后须有空格或冒号再接标题）。
 - **DeepSeek 连接失败**：增大 `API_MAX_RETRIES`、`API_HTTP_READ_TIMEOUT`；或换 `LLM_PROVIDER=doubao`。
 - **换书后上下文串台**：删除本地 `story_context.json`、`runtime/`、`pruned_context_archive.json` 后重跑。
+
+---
+
+## 向后兼容性说明
+
+所有新增模块都是**向后兼容**的：
+
+- `app.py` 原有主流程完全不变，不用改现有代码
+- 新增模块（`structured_types.py`、`outline_extractor.py`、`audit_enhanced.py`、`ai_trace_enhanced.py`）可以独立使用
+- 原有 `audit_pipeline.py`、`ai_trace_rules.py` 继续工作
+
+你可以**逐步集成**新功能，不需要一次性重构所有代码！

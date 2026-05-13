@@ -2,6 +2,13 @@ import math
 import re
 from collections import Counter
 
+# 新增增强AI痕迹检测
+try:
+    from ai_trace_enhanced import enhanced_ai_trace_analysis
+    ENHANCED_TRACE_AVAILABLE = True
+except ImportError:
+    ENHANCED_TRACE_AVAILABLE = False
+
 
 SUMMARY_TAIL_PATTERNS = [
     r"这一刻",
@@ -407,6 +414,25 @@ def analyze_ai_trace(text, recent_chapter_texts=None):
                     "suggestion": "换落板方式：用决断/代价/新变量收尾，避免重复解释式结尾。",
                     "span_hint": "尾句/尾段",
                 })
+
+    # 新增：增强AI痕迹检测（统计分布分析）
+    if ENHANCED_TRACE_AVAILABLE:
+        try:
+            enhanced_analysis = enhanced_ai_trace_analysis(text)
+            enhanced_score = enhanced_analysis.get("combined_score", 0)
+            if enhanced_score >= 60:  # 高分才加惩罚
+                penalty = int(enhanced_score * 0.1)  # 最多加10分
+                score_penalty += penalty
+                issues.append({
+                    "rule": "统计特征AI化",
+                    "severity": "warning" if enhanced_score >= 80 else "info",
+                    "description": f"统计特征检测到较强AI痕迹（得分={enhanced_score:.1f}/100）。",
+                    "suggestion": "增加句子/段落长度变化，减少标准化情绪表达。",
+                    "span_hint": "全文风格",
+                })
+        except Exception as e:
+            # 增强检测失败不影响主流程
+            pass
 
     return {
         "score_penalty": min(55, score_penalty),

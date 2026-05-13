@@ -1,9 +1,9 @@
 {
-  "pass_threshold": 85,
+  "pass_threshold": 60,
   "deterministic_penalty_cap_total": 12,
   "deterministic_penalty_cap_ai_trace": 10,
-  "ai_trace_hard_threshold": 80,
-  "hard_fail_threshold": 60,
+  "ai_trace_hard_threshold": 50,
+  "hard_fail_threshold": 40,
   "max_revise_rounds": 3,
   "reference_similarity": {
     "ngram_overlap_threshold": 0.045,

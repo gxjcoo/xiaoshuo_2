@@ -1,5 +1,10 @@
 import os
 import json
+from typing import Tuple, Dict, Any
+
+# 新增模块导入
+from outline_extractor import extract_structured_outline_from_reference
+from structured_types import ChapterOutline
 
 # 从其他模块导入所需函数和常量
 from config import (
@@ -89,6 +94,44 @@ def read_chapter_file(filepath):
     except Exception as e:
         print(f"读取文件 {filepath} 时出错: {e}")
         return None
+
+
+def get_chapter_start_end(chapter_content: str, lines_count: int = 5) -> Tuple[str, str]:
+    """
+    获取章节的开头和结尾（默认各5行）
+    返回：(开头文本, 结尾文本)
+    """
+    if not chapter_content:
+        return "", ""
+    lines = [line.rstrip() for line in chapter_content.splitlines() if line.strip()]
+    if not lines:
+        return "", ""
+    start = "\n".join(lines[:min(lines_count, len(lines))])
+    end = "\n".join(lines[-min(lines_count, len(lines)):])
+    return start, end
+
+
+def preload_chapter_anchors(input_dir: str, start_chapter: int, end_chapter: int) -> Dict[int, Dict[str, str]]:
+    """
+    预加载所有章节的首尾锚点，用于双向衔接校验
+    返回：{章节号: {"start": 开头文本, "end": 结尾文本}}
+    """
+    anchors = {}
+    print(f"正在预加载章节 {start_chapter} 到 {end_chapter} 的首尾锚点...")
+    for ch in range(start_chapter, end_chapter + 1):
+        filepath = os.path.join(input_dir, f"{ch}.md")
+        if not os.path.isfile(filepath):
+            continue
+        content = read_chapter_file(filepath)
+        if not content:
+            continue
+        start, end = get_chapter_start_end(content)
+        anchors[ch] = {
+            "start": start,
+            "end": end,
+        }
+    print(f"已预加载 {len(anchors)} 个章节的首尾锚点")
+    return anchors
 
 def write_chapter_file(filepath, content):
     """将内容写入章节文件"""
@@ -392,12 +435,31 @@ def process_chapter(
     strict_source_plot=True,
     force_reanalyze=False,
     analyze_only=False,
+    chapter_anchors=None,
 ):
     """同结构改编单章：对照 input/{n}.md 生成 output/{n}.md（保留结构功能，实体表达可改）。
 
     strict_source_plot: True（默认）时衔接 input 原作上一章、规划/生成锁定结构骨架、
     不把生成稿反写进 story_context / 不写 story_domain 自动增量。False 时为实验模式。
+
+    chapter_anchors: 预加载的所有章节首尾锚点 {ch: {"start": "...", "end": "..."}}
+        用于双向校验，确保本开头衔接上一章结尾、本结尾衔接下一章开头。
     """
+    # 提取双向锚点：上一章结尾 + 下一章开头
+    prev_chapter_end = ""
+    next_chapter_start = ""
+    if isinstance(chapter_anchors, dict):
+        prev = chapter_anchors.get(chapter_number - 1)
+        if prev and isinstance(prev, dict):
+            prev_chapter_end = prev.get("end", "")
+        next_ch = chapter_anchors.get(chapter_number + 1)
+        if next_ch and isinstance(next_ch, dict):
+            next_chapter_start = next_ch.get("start", "")
+    if prev_chapter_end:
+        print(f"已加载上一章结尾锚点 (第 {chapter_number - 1} 章)，用于双向衔接校验")
+    if next_chapter_start:
+        print(f"已加载下一章开头锚点 (第 {chapter_number + 1} 章)，用于双向衔接校验")
+
     print(f"\n--- 处理章节 {chapter_number}（同结构改编） ---")
     input_filepath = os.path.join(input_dir, f"{chapter_number}.md")
     output_filepath = os.path.join(output_dir, f"{chapter_number}.md")
@@ -426,11 +488,23 @@ def process_chapter(
         return False
 
     reference_plot_outline = ""
+    structured_outline = None  # 新增：结构化骨架
     if not force_reanalyze:
         reference_plot_outline = load_cached_outline(chapter_number)
         if reference_plot_outline:
             print(f"已复用缓存结构骨架: {_runtime_path(chapter_number, 'outline.json')}")
-    if not reference_plot_outline:
+            # 尝试加载结构化骨架（如果存在）
+            try:
+                structured_path = _runtime_path(chapter_number, "structured_outline.json")
+                if os.path.isfile(structured_path):
+                    with open(structured_path, "r", encoding="utf-8") as f:
+                        structured_data = json.load(f)
+                        structured_outline = ChapterOutline.from_dict(structured_data)
+                        print(f"已复用结构化骨架，包含 {len(structured_outline.scenes)} 个场景节点")
+            except Exception as e:
+                print(f"读取结构化骨架缓存失败: {e}")
+    if not reference_plot_outline or not structured_outline:
+        # 提取传统骨架（原有逻辑）
         reference_plot_outline = extract_plot_outline_from_reference(
             original_content,
             chapter_number,
@@ -439,8 +513,26 @@ def process_chapter(
         if reference_plot_outline:
             print("已从参考章抽取结构骨架，正文生成将基于骨架改编以降低相似度。")
             write_runtime_outline(chapter_number, reference_plot_outline)
+        # 新增：提取结构化骨架
+        structured_outline = extract_structured_outline_from_reference(
+            original_content,
+            chapter_number,
+            strict_source_plot=strict_source_plot,
+        )
+        if structured_outline:
+            # 保存结构化骨架
+            try:
+                os.makedirs(RUNTIME_DIR, exist_ok=True)
+                structured_path = _runtime_path(chapter_number, "structured_outline.json")
+                with open(structured_path, "w", encoding="utf-8") as f:
+                    json.dump(structured_outline.to_dict(), f, ensure_ascii=False, indent=2)
+                print(f"已保存结构化骨架到: {structured_path}")
+            except Exception as e:
+                print(f"保存结构化骨架失败: {e}")
     if not reference_plot_outline:
         print("警告：结构骨架抽取失败，正文生成将使用极短参考结构兜底。")
+    if not structured_outline:
+        print("提示：结构化骨架抽取失败，将继续使用原有流程。")
 
     previous_chapter_content = None
     next_chapter_preview = _load_reference_chapter_from_input(input_dir, chapter_number + 1) or ""
@@ -558,6 +650,8 @@ def process_chapter(
         reference_chapter_text=original_content,
         reference_plot_outline=reference_plot_outline,
         strict_source_plot=strict_source_plot,
+        prev_chapter_end=prev_chapter_end,
+        next_chapter_start=next_chapter_start,
     )
     if not new_chapter_content:
         print(f"错误：未能生成章节 {chapter_number} 的内容，跳过此章节。")
@@ -577,6 +671,8 @@ def process_chapter(
         domain_text=domain_text,
         author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
+        prev_chapter_end=prev_chapter_end,
+        next_chapter_start=next_chapter_start,
     )
     new_chapter_content = audit_gate_result.get("content", new_chapter_content)
     if not audit_gate_result.get("passed", False):

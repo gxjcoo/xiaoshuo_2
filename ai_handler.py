@@ -720,6 +720,8 @@ def generate_chapter_content(
     reference_chapter_text="",
     reference_plot_outline="",
     strict_source_plot=False,
+    prev_chapter_end="",
+    next_chapter_start="",
 ):
     """使用 AI 生成新的章节内容。
 
@@ -913,7 +915,28 @@ def generate_chapter_content(
             f"4. 结尾若出现追喊、追杀、误会、拦路等钩子，必须与下一章开头的真实指向一致。\n"
         )
 
-    prompt = prompt_instruction
+    # 双向衔接约束（如果提供了前后章锚点）
+    bidirectional_contract = ""
+    if prev_chapter_end or next_chapter_start:
+        bidirectional_contract = "【双向衔接硬约束（必须遵守）】\n"
+        if prev_chapter_end:
+            bidirectional_contract += (
+                f"上一章结尾的真实内容如下（本开头必须与之自然衔接，时间线和情绪不可断裂）：\n"
+                f"```\n{prev_chapter_end}\n```\n"
+            )
+        if next_chapter_start:
+            bidirectional_contract += (
+                f"下一章开头的真实内容如下（本结尾钩子必须与之匹配，对象/指向/事件不可矛盾）：\n"
+                f"```\n{next_chapter_start}\n```\n"
+            )
+        bidirectional_contract += (
+            "核心规则：\n"
+            "1. 开头：必须从上章结尾自然接入，不可「强行切换场景」或「跳时间线」。\n"
+            "2. 结尾：生成钩子的对象/事件/指向必须与下一章开头一致。"
+            " 例如：下一章开头是「妖道追杀」，本章结尾就应当是「妖道出现」，而不是「主角被抓」。\n\n"
+        )
+
+    prompt = prompt_instruction + bidirectional_contract
     messages = [
         {
             "role": "system",

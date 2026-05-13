@@ -1,6 +1,10 @@
 import json
 import os
 import copy
+from typing import Optional, Dict, Any
+
+# 新增结构化知识库导入
+from structured_types import StoryKnowledgeBase, CharacterState, Conflict, ItemInfo
 
 # 从 config 模块导入相关常量
 from config import (
@@ -747,3 +751,104 @@ def auto_add_core_items(chapter_content):
         print(f"已自动添加 {len(new_added)} 个新的核心道具: {', '.join(new_added)}")
     
     return new_added
+
+
+# =============================================================================
+# 新增：结构化知识库支持（向后兼容，不影响原有逻辑）
+# =============================================================================
+
+# 全局结构化知识库实例
+_story_kb = None
+
+def get_structured_knowledge_base() -> StoryKnowledgeBase:
+    """获取结构化知识库实例，如果不存在则从现有上下文转换"""
+    global _story_kb
+    if _story_kb is not None:
+        return _story_kb
+    
+    # 从现有上下文转换
+    context = get_current_context()
+    kb = StoryKnowledgeBase()
+    
+    # 转换主角信息
+    prot_info = context.get("protagonist_info", {})
+    if isinstance(prot_info, dict):
+        prot_name = prot_info.get("name", "Unknown")
+        if prot_name and prot_name != "Unknown":
+            kb.add_character(CharacterState(
+                name=prot_name,
+                description=prot_info.get("description", ""),
+                current_goal=prot_info.get("current_goal", ""),
+            ))
+    
+    # 转换核心角色
+    core_chars = context.get("core_characters", [])
+    for char in core_chars[:20]:  # 限制数量
+        if isinstance(char, str) and char not in kb.characters:
+            kb.add_character(CharacterState(name=char))
+    
+    # 转换核心物品
+    core_items = context.get("core_items", [])
+    for item in core_items[:20]:
+        if isinstance(item, str) and item not in kb.key_items:
+            kb.key_items[item] = ItemInfo(name=item, description="")
+    
+    # 转换待回收钩子
+    pending_hooks = context.get("pending_hooks", [])
+    for hook in pending_hooks[:20]:
+        if isinstance(hook, str):
+            kb.add_hook(hook)
+    
+    # 转换近期摘要
+    recent_summaries = context.get("recent_chapter_summaries", [])
+    for summary in recent_summaries[-10:]:
+        if isinstance(summary, dict) and "summary" in summary:
+            kb.add_recent_summary(summary["summary"])
+        elif isinstance(summary, str):
+            kb.add_recent_summary(summary)
+    
+    _story_kb = kb
+    print("已从现有上下文转换为结构化知识库")
+    return kb
+
+def save_structured_knowledge_base(filepath: str = None):
+    """保存结构化知识库到文件"""
+    kb = get_structured_knowledge_base()
+    if filepath is None:
+        filepath = os.path.join(os.path.dirname(CONTEXT_FILE), "story_knowledge_base.json")
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(kb.to_dict(), f, ensure_ascii=False, indent=2)
+        print(f"结构化知识库已保存到: {filepath}")
+        return True
+    except Exception as e:
+        print(f"保存结构化知识库失败: {e}")
+        return False
+
+def load_structured_knowledge_base(filepath: str = None) -> Optional[StoryKnowledgeBase]:
+    """从文件加载结构化知识库"""
+    global _story_kb
+    if filepath is None:
+        filepath = os.path.join(os.path.dirname(CONTEXT_FILE), "story_knowledge_base.json")
+    if not os.path.isfile(filepath):
+        return None
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _story_kb = StoryKnowledgeBase.from_dict(data)
+        print(f"已加载结构化知识库: {filepath}")
+        return _story_kb
+    except Exception as e:
+        print(f"加载结构化知识库失败: {e}")
+        return None
+
+def update_structured_knowledge_base_from_chapter(chapter_content: str):
+    """从新章节更新结构化知识库"""
+    from ai_handler import call_deepseek_api
+    
+    kb = get_structured_knowledge_base()
+    
+    # 这里可以实现从章节内容抽取信息更新知识库的逻辑
+    # 目前是占位，可以后续完善
+    print("结构化知识库更新功能待完善")
+    return kb

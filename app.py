@@ -11,7 +11,7 @@ if current_dir not in sys.path:
 
 from config import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, STRICT_SOURCE_PLOT
 from context_manager import load_story_context # 直接使用返回的上下文
-from chapter_processor import process_chapter
+from chapter_processor import process_chapter, preload_chapter_anchors
 
 def main():
     start_time = time.time() # 记录开始时间
@@ -149,6 +149,9 @@ def main():
     if args.force_reanalyze:
         print("重分析模式: 忽略 runtime 缓存，重新生成分析工件。")
 
+    # --- 双向校验：预加载所有章节首尾锚点 ---
+    chapter_anchors = preload_chapter_anchors(args.input_dir, start_chapter, end_chapter)
+
     # 循环处理指定范围的章节
     all_successful = True
     processed_count = 0
@@ -164,6 +167,7 @@ def main():
             strict_source_plot=strict_source_plot,
             force_reanalyze=args.force_reanalyze,
             analyze_only=args.analyze_only,
+            chapter_anchors=chapter_anchors,
         )
         chapter_end_time = time.time()
         chapter_duration = chapter_end_time - chapter_start_time
