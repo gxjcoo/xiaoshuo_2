@@ -80,6 +80,56 @@ def _reference_prose_snippet(text, max_chars=2600):
     return f"{head.rstrip()}\n\n…(参考原文中部已省略)…\n\n{tail.lstrip()}"
 
 
+def extract_plot_outline_from_reference(reference_chapter_text, chapter_number, strict_source_plot=True):
+    """从参考章抽取结构骨架，供生成阶段使用，避免直接贴原文导致高相似。"""
+    if not isinstance(reference_chapter_text, str) or not reference_chapter_text.strip():
+        return ""
+
+    ref_text = _reference_prose_snippet(reference_chapter_text, max_chars=6200)
+    prompt = (
+        f"请把第 {chapter_number} 章参考原文抽取成“结构功能骨架”，输出 JSON。\n"
+        "目标：后续作者会基于骨架做同结构改编，不会看到原文全文。\n"
+        "必须保留事件功能、冲突功能、因果位置和结尾功能，但不要复写原文句子，也不要把原文实体名视为必须保留。\n\n"
+        "JSON 字段：\n"
+        "{\n"
+        '  "chapter_goal": string,\n'
+        '  "scene_beats": [string],\n'
+        '  "character_motives": [string],\n'
+        '  "must_keep_facts": [string],\n'
+        '  "causal_chain": [string],\n'
+        '  "ending_state": string,\n'
+        '  "do_not_change": [string]\n'
+        "}\n\n"
+        "规则：\n"
+        "- scene_beats 按原文事件顺序列 5-10 条，每条只写事实，不写原文修辞。\n"
+        "- must_keep_facts 只放改变结构功能会出错的信息点，避免把可改名的人名/地名当成硬约束。\n"
+        "- 不要摘抄连续 12 个字以上的原文表达。\n"
+        "- 不要输出正文、标题、修辞点评或 Markdown。\n"
+        f"- 当前模式：{'严格结构适配' if strict_source_plot else '结构主干适配'}。\n\n"
+        f"【参考原文】\n{ref_text}"
+    )
+    messages = [
+        {"role": "system", "content": "你是小说结构拆解编辑，只抽取叙事功能、事件功能和因果位置，不复写原文句子。输出合法 JSON。"},
+        {"role": "user", "content": prompt},
+    ]
+    raw = call_deepseek_api(
+        messages,
+        CONTEXT_ANALYSIS_MODEL,
+        max_tokens=1600,
+        temperature=0.1,
+        response_format={"type": "json_object"},
+    )
+    if not raw:
+        return ""
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            return raw.strip()
+        return json.dumps(parsed, ensure_ascii=False, indent=2)
+    except Exception:
+        return raw.strip()
+
+
 def _slim_context_for_generation(current_context, writing_chapter_number=None):
     """生成侧瘦身：完整 JSON 易诱发按 pending_hooks/设定清单扩写。
 
@@ -495,8 +545,8 @@ def analyze_writing_style(text_sample):
 
     # 使用针对风格分析优化的提示词
     prompt = (
-        f"请对以下**参考原文**（用于仿写对照）做全面分析，使后续仿写输出在语气、节奏与笔法上与原作一致；"
-        f"分析服务于「同情节再叙述」而非「另写新故事」。分析需涵盖以下几个关键维度：\n\n"
+        f"请对以下**参考原文**（用于同结构改编的风格参照）做全面分析，使后续输出在语气、节奏与笔法上与原作同调；"
+        f"分析服务于「同结构改编」而非「另写新故事」。分析需涵盖以下几个关键维度：\n\n"
         f"1. **语言风格细节**：\n"
         f"   - 语气和基调：文本的情感色彩和总体氛围（庄重、轻松、紧张、诙谐等）\n"
         f"   - 句法结构：句子长短、复杂度，常用句式模式，有无特殊断句或排版特点\n" 
@@ -518,15 +568,15 @@ def analyze_writing_style(text_sample):
         f"   - 核心主题：文本传达的核心思想或情感\n"
         f"   - 情感表达：喜怒哀乐等情感的表达方式和强度\n\n"
         f"原始文本样本：\n\n{limited_sample}\n\n"
-        f"请提供详细分析，确保捕捉到原文的独特风格特征；分析应足够具体，能指导**仿写**时的遣词与节奏（不要求编造新剧情）。\n\n"
+        f"请提供详细分析，确保捕捉到原文的独特风格特征；分析应足够具体，能指导**同结构改编**时的遣词与节奏（不要求复用原实体名）。\n\n"
     )
 
     messages = [
         {
             "role": "system",
             "content": (
-                "你是一位精通文学分析的专家，擅长从参考文本中提取仿写所需的语言风格、叙事节奏与表达习惯；"
-                "你的输出将用于「同作再叙述」而非创作新故事大纲。"
+                "你是一位精通文学分析的专家，擅长从参考文本中提取同结构改编所需的语言风格、叙事节奏与表达习惯；"
+                "你的输出将用于「同结构改编」而非创作新故事大纲。"
             ),
         },
         {"role": "user", "content": prompt}
@@ -557,6 +607,7 @@ def plan_chapter_with_ai(
     current_context,
     target_chapter_number,
     previous_chapter_content=None,
+    next_chapter_preview="",
     author_intent_text="",
     current_focus_text="",
     reference_chapter_text="",
@@ -565,14 +616,16 @@ def plan_chapter_with_ai(
     """生成本章意图规划（短文本），用于约束正文生成焦点。"""
     context_json = json.dumps(current_context, ensure_ascii=False, indent=2)
     previous_tail = (previous_chapter_content or "")[-1200:]
+    next_head = (next_chapter_preview or "")[:1600]
     ref_snip = ""
     strict_head = ""
     if strict_source_plot and (reference_chapter_text or "").strip():
         ref_snip = _reference_prose_snippet(reference_chapter_text, max_chars=4200)
         strict_head = (
-            "【模式：严格跟原作情节】\n"
-            "本章意图必须能从「本章参考原文节选」中推导：只拆解已有场景顺序、冲突与信息点，写成可执行写作点；"
-            "不得新增参考原文里不存在的关键事件、不得改因果与结局走向。\n"
+            "【模式：严格结构适配，表达与实体去同构】\n"
+            "本章意图必须能从「本章参考原文节选」中推导：只拆解已有场景功能、冲突功能与信息点，写成可执行改编点；"
+            "不得新增参考原文里不存在的关键结构功能、不得改因果位置与结局功能。"
+            "不要摘抄原文句子，不要把原文段落节奏写成计划。\n"
             "若与【作者长期意图】【近期焦点】或 JSON 上下文冲突，一律以参考原文为准，其余仅作语气参考。\n\n"
             f"【本章参考原文节选（意图规划唯一情节依据）】\n```\n{ref_snip}\n```\n\n"
         )
@@ -588,12 +641,13 @@ def plan_chapter_with_ai(
         f"5) 用自然语言短句列出即可，不要写成正文片段或带编号的小标题目录。\n\n"
         f"【当前上下文】\n{context_json}\n\n"
         f"【上一章结尾（衔接用，可选）】\n{previous_tail if previous_tail else '无'}\n\n"
+        f"【下一章开头（本章结尾硬约束，可选）】\n{next_head if next_head else '无'}\n\n"
         f"【作者长期意图（可选）】\n{author_intent_text if author_intent_text else '无'}\n\n"
         f"【近期焦点（可选）】\n{current_focus_text if current_focus_text else '无'}\n"
     )
-    system_msg = "你擅长把「仿写」任务拆成可执行写作点：只拆解参考里已有戏，不发明新主线。"
+    system_msg = "你擅长把「同结构改编」任务拆成可执行写作点：只拆解参考里的结构功能，不发明新主线，也不复刻原文表达和实体体系。"
     if strict_source_plot and ref_snip:
-        system_msg += " 当前为严格仿写：意图必须与参考原文场次一一对应，不得添加参考中不存在的关键事件。"
+        system_msg += " 当前为严格结构适配：意图必须与参考原文场次功能一一对应，不得添加参考中不存在的关键功能，但表达结构和实体体系要为后续改编留出距离。"
     messages = [
         {"role": "system", "content": system_msg},
         {"role": "user", "content": prompt},
@@ -656,6 +710,7 @@ def generate_chapter_content(
     writing_style,
     target_length,
     previous_chapter_content=None,
+    next_chapter_preview="",
     target_chapter_number=None,
     domain_text="",
     chapter_plan_text="",
@@ -663,13 +718,15 @@ def generate_chapter_content(
     current_focus_text="",
     audit_requirements_text="",
     reference_chapter_text="",
+    reference_plot_outline="",
     strict_source_plot=False,
 ):
     """使用 AI 生成新的章节内容。
 
     domain_text: 领域圣经（DDD），静态设定与统一说法。
-    reference_chapter_text: 输入目录参考章原文（用于对齐语感，避免只喂风格分析报告）。
-    strict_source_plot: 情节以参考章为准，衔接上一章优先原作（由调用方传入 previous 内容）。
+    reference_chapter_text: 输入目录参考章原文（仅用于标题兜底；生成阶段不直接注入正文片段）。
+    reference_plot_outline: 从参考章提取的结构功能骨架，用于代替原文片段以降低相似度。
+    strict_source_plot: 结构功能以参考章为准，衔接上一章优先原作（由调用方传入 previous 内容）。
     """
     if target_chapter_number is None:
         chapter_number = current_context.get("last_generated_chapter", 0) + 1
@@ -702,39 +759,35 @@ def generate_chapter_content(
     )
 
     style_brief = _brief_style_for_generation(writing_style)
-    ref_cap = 5600 if strict_source_plot else 2600
-    ref_snippet = (
-        _reference_prose_snippet(reference_chapter_text, max_chars=ref_cap)
-        if reference_chapter_text
-        else ""
-    )
+    next_head = (next_chapter_preview or "")[:1800].strip()
     reference_block = ""
-    if ref_snippet:
-        if strict_source_plot:
-            reference_block = (
-                "【本章参考原文（情节、场次顺序、因果与人物结果以此为最高准则；"
-                "可扩写对白、感官、过渡，禁止另起与参考冲突的主线或关键反转）】\n"
-                f"```\n{ref_snippet}\n```\n\n"
-            )
-        else:
-            reference_block = (
-                "【本章参考原文（仿写对象；对齐语气与节奏；情节主干以此为准，意图仅辅助）】\n"
-                f"```\n{ref_snippet}\n```\n\n"
-            )
+    if reference_plot_outline:
+        reference_block = (
+            "【本章结构功能骨架（由参考章抽取；生成正文只能依据这些结构功能，不得复刻参考原文表达或实体体系）】\n"
+            f"```json\n{reference_plot_outline}\n```\n\n"
+        )
+    elif reference_chapter_text:
+        # 兜底：只有骨架抽取失败时才给极短事实片段，避免生成阶段大段接触原文。
+        fallback_ref = _reference_prose_snippet(reference_chapter_text, max_chars=900)
+        reference_block = (
+            "【本章参考结构兜底片段（骨架抽取失败时使用；只取事件功能，禁止沿用句式、实体名和段落推进）】\n"
+            f"```\n{fallback_ref}\n```\n\n"
+        )
 
     if strict_source_plot:
         strict_plot_contract = (
-            "【仿写｜情节以参考原文为唯一真值】\n"
-            "1) 主事件链、场景先后、因果关系、人物登场/退场与冲突结果须与参考原文一致；不是续写新书、不是扩写无关支线。\n"
-            "2) 仅允许「同一场内的放大描写」：对白、动作细部、环境声味、节奏；不得写入参考中未发生的关键事实。\n"
-            "3) 若领域圣经、作者长期意图、近期焦点、JSON 上下文或本章意图与参考原文冲突，一律以参考原文为准。\n"
-            "4) 不得新增改变本章走向的支线或替换结局。\n\n"
+            "【同结构改编｜结构功能以骨架为真值，表达与实体必须拉开距离】\n"
+            "1) 主事件功能、场景功能、因果位置、人物登场/退场功能与冲突结果功能须与结构骨架一致；不是续写新书、不是扩写无关支线。\n"
+            "2) 允许更换人物名、地点名、事件名、动物/物件名和局部承接方式；不得写入骨架中不存在的关键结构功能。\n"
+            "3) 禁止沿用参考原文的连续句式、段落推进、开头落点、结尾收束方式和实体体系；同一功能事件必须换一种现场展开。\n"
+            "4) 若领域圣经、作者长期意图、近期焦点、JSON 上下文或本章意图与结构骨架冲突，一律以结构骨架为准。\n"
+            "5) 不得新增改变本章结构功能的支线或替换结局功能。\n\n"
         )
     else:
         strict_plot_contract = (
-            "【仿写（实验模式：上一段衔接可能来自已生成 output）】\n"
-            "本章主干仍以 input 参考为真：不得仅凭 output 衔接或 JSON 上下文编造与参考冲突的新主线、新结局或重要新角色。\n"
-            "允许：语气、对白颗粒、感官扩写；禁止：当作自由续写或另起故事。\n\n"
+            "【同结构改编（实验模式：上一段衔接可能来自已生成 output）】\n"
+            "本章主干仍以结构骨架为真：不得仅凭 output 衔接或 JSON 上下文编造冲突的新主线、新结局功能或重要结构节点。\n"
+            "允许：语气、对白颗粒、感官扩写、镜头入口变化、实体名更换；禁止：贴着参考原文句式或实体体系洗稿。\n\n"
         )
 
     # 获取核心角色和道具
@@ -752,14 +805,15 @@ def generate_chapter_content(
         )
 
     # --- 核心创作要求 (共同部分) ---
-    # 严格仿写时参考原文已是「节拍表」；再叠长条规则 + 两阶段契约，易诱发清单腔、工整句，抬高平台 AI 率。
+    # 严格结构适配时结构骨架已是「节拍表」；再叠长条规则 + 两阶段契约，易诱发清单腔、工整句，抬高平台 AI 率。
     if strict_source_plot:
         production_hard_rules = (
-            f"【成文忌口（仿写专用，从简）】\n"
+            f"【成文忌口（同结构改编专用，从简）】\n"
             f"- 句长错落，少排比；对话两人以上时口气要能区分。\n"
             f"- 少用段尾万能收束（总之/不禁/这一刻/他明白）；少连续内心说明书。\n"
             f"- 系统提示用打断、半句、动作混进戏里，不要连发同一腔调通知框。\n"
-            f"- 情节跟着参考走即可，不要用「分析腔」复述上文规则。\n\n"
+            f"- 结构功能跟着骨架走，但实体名、镜头、承接、句式要换，不要贴原文段落。\n"
+            f"- 禁止连续 12 个字以上与参考原文相同；避免复用参考章的实体体系、开头句、结尾句和标志性比喻。\n\n"
         )
     else:
         production_hard_rules = (
@@ -795,7 +849,14 @@ def generate_chapter_content(
     core_requirements = (
         f"{reference_block}"
         f"{strict_plot_contract}"
-        f"【语言风格备忘（非提纲；禁止模仿下列编号、小标题或分析腔落笔）】\n{style_brief}\n\n"
+        + (
+            "【下一章开头硬约束（用于避免断章冲突）】\n"
+            "本章结尾必须能自然接入下列下一章开头；不得改变下一章开头已经确定的追问对象、冲突对象、人物关系和误会指向。\n"
+            "如果下一章开头揭示某句喊话并非冲着主角，就不能在本章结尾写成主角已被明确抓捕或定罪。\n"
+            f"```\n{next_head}\n```\n\n"
+            if next_head else ""
+        )
+        + f"【语言风格备忘（非提纲；禁止模仿下列编号、小标题或分析腔落笔）】\n{style_brief}\n\n"
         f"{current_context_summary}\n\n"
         f"{core_elements}\n\n"
         f"{ddd_block}"
@@ -804,12 +865,12 @@ def generate_chapter_content(
         f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}"
         f"{'（严格模式下若与参考原文冲突则忽略）' if strict_source_plot else '（优先于长期意图）'}\n\n"
         f"【审计规则前置约束（写作时必须遵守）】\n{audit_requirements_text if audit_requirements_text else '无'}\n\n"
-        f"【本章意图（须融化进场景；不得脱离参考编造新主线）】\n"
-        f"{chapter_plan_text if chapter_plan_text else '无（仍须严格按本章参考原文的情节与场次写）'}\n\n"
+        f"【本章意图（须融化进场景；不得脱离结构骨架编造新主线）】\n"
+        f"{chapter_plan_text if chapter_plan_text else '无（仍须严格按结构骨架的功能节点与场次写）'}\n\n"
         f"{implicit_two_phase_contract}"
         f"{production_hard_rules}"
         f"【核心创作要求】：\n"
-        f"1. **风格**：仿写像真人落笔；幽默从处境里长出来，不要为搞笑而堆梗。\n"
+        f"1. **风格**：同结构改编也要像真人落笔；幽默从处境里长出来，不要为搞笑而堆梗。\n"
         f"2. **连贯**：人物反应符合参考中的当下压力；设定与领域圣经一致且不与参考冲突。\n"
         f"3. **标题**：第 {chapter_number} 章单行标题，格式 `# 第{chapter_number}章 …` 置于最前。\n"
         f"4. **字数**：约 {target_length} 字；允许语意跳跃，不必写满「说明」才算完成。\n"
@@ -822,7 +883,7 @@ def generate_chapter_content(
 
     # 根据是否有前文构建不同的提示指令
     if previous_chapter_content:
-        print(f"正在仿写第 {chapter_number} 章（带上一段衔接）…")
+        print(f"正在同结构改编第 {chapter_number} 章（带上一段衔接）…")
         previous_ending = previous_chapter_content[-2000:]  # 可调整长度
         cont_note = ""
         if strict_source_plot:
@@ -833,22 +894,23 @@ def generate_chapter_content(
             cont_note = "【衔接说明】上一段可能来自 output；本章情节仍以 input 参考为准，不得据衔接段新编主线。\n"
         prompt_instruction = (
             core_requirements +
-            f"【仿写衔接（仅连贯口语气与镜头，不另起故事）】：\n"
+            f"【同结构改编衔接（仅连贯口语气与镜头，不另起故事）】：\n"
             f"{cont_note}"
-            f"1. 正文从下列节选自然接入，时间线连续；不得引入参考中尚未出现的重大新因果。\n"
+            f"1. 正文从下列节选自然接入，时间线连续；不得引入参考结构中尚未出现的重大新功能节点。\n"
             f"   上一章节选：\n   ```\n   {previous_ending}\n   ```\n"
-            f"2. 情绪与信息推进须落在本章参考原文已有的事件上，不得写成「续写下一本书」。\n"
-            f"3. 角色反应与参考一致，可扩写微表情与对白颗粒。\n"
-            f"4. 禁止为拉长篇幅而插入与参考无关的重要支线。\n"
+            f"2. 情绪与信息推进须落在本章结构骨架已有的功能节点上，不得写成「续写下一本书」。\n"
+            f"3. 角色反应功能与参考一致，但实体名、动作细节、对白颗粒应改编。\n"
+            f"4. 禁止为拉长篇幅而插入与参考结构无关的重要支线。\n"
         )
     else:
-        print(f"正在仿写第 {chapter_number} 章（无上一段衔接）…")
+        print(f"正在同结构改编第 {chapter_number} 章（无上一段衔接）…")
         prompt_instruction = (
             core_requirements +
-            f"【仿写开篇】：\n"
-            f"1. 仅覆盖本章 input 参考中的情节与场次，不得改主线因果，也不是创作全新开篇故事。\n"
-            f"{'2. 不得跳过或调换参考中的关键场次。' if strict_source_plot else '2. 勿整段复述，可作对白与感官扩写。'}\n"
+            f"【同结构改编开篇】：\n"
+            f"1. 仅覆盖本章 input 参考中的结构功能与场次功能，不得改主线因果位置，也不是创作全新开篇故事。\n"
+            f"{'2. 不得跳过参考中的关键功能场次，但可以更换实体名和局部承接。' if strict_source_plot else '2. 勿整段复述，可作对白、实体和感官改编。'}\n"
             f"3. 从现场与动作进入，少用说明书式内心。\n"
+            f"4. 结尾若出现追喊、追杀、误会、拦路等钩子，必须与下一章开头的真实指向一致。\n"
         )
 
     prompt = prompt_instruction
@@ -856,14 +918,15 @@ def generate_chapter_content(
         {
             "role": "system",
             "content": (
-                "你是一位小说仿写作家：对照参考输出同一故事、同一场次的再叙述，语气有松有紧、句子有长有短，拒绝范文腔。"
-                "不是自由续写、不是扩写新故事线、不是同人另起炉灶；提示中的分析/意图是备忘，禁止把提示结构映射成新章节大纲。"
-                "若含「领域圣经 DDD」，不与参考冲突时遵守；冲突时以参考原文情节为准。"
-                "禁止用「心里咯噔一下/不禁/这一刻/显然」等万能情绪套话收束段落。"
-                + (
-                    " 当前为严格仿写：本章参考正文即情节真值，只可润色扩写，不可改戏。"
+            "你是一位小说同结构改编作家：依据结构骨架输出同一功能链的新正文，语气有松有紧、句子有长有短，拒绝范文腔。"
+            "不是自由续写、不是扩写新故事线、不是同人另起炉灶；提示中的分析/意图是备忘，禁止把提示结构映射成新章节大纲。"
+            "若含「领域圣经 DDD」，不与结构骨架冲突时遵守；冲突时以结构骨架为准。"
+            "必须主动避开参考原文的实体体系、句式骨架、段落推进、开头和结尾表达。"
+            "禁止用「心里咯噔一下/不禁/这一刻/显然」等万能情绪套话收束段落。"
+            + (
+                    " 当前为严格结构适配：本章结构骨架即功能真值，可以换实体、表达和镜头承接，不可改结构功能。"
                     if strict_source_plot
-                    else " 当前为仿写实验模式：衔接可能非原作，但本章主干仍以参考为准。"
+                    else " 当前为同结构改编实验模式：衔接可能非原作，但本章主干仍以结构骨架为准。"
                 )
             ),
         },

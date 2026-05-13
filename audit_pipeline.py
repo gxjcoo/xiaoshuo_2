@@ -1,7 +1,15 @@
 import json
 import re
 
-from config import ENABLE_ANTI_AI_REWRITE, ANTI_AI_MAX_ROUNDS, AUDIT_NEAR_PASS_DELTA
+from config import (
+    ENABLE_ANTI_AI_REWRITE,
+    ANTI_AI_MAX_ROUNDS,
+    AUDIT_NEAR_PASS_DELTA,
+    REFERENCE_SIMILARITY_NGRAM_OVERLAP,
+    REFERENCE_SIMILARITY_SENTENCE_REUSE,
+    REFERENCE_SIMILARITY_OVERLAP_COUNT,
+    PLOT_FIDELITY_MIN_SCORE,
+)
 from config import CHAPTER_GENERATION_MODEL, CONTEXT_ANALYSIS_MODEL
 from ai_handler import call_deepseek_api
 from ai_trace_rules import analyze_ai_trace
@@ -45,6 +53,253 @@ def compare_reference_and_generated(reference_text, generated_text):
     return {"reference": ref, "generated": gen, "delta": delta}
 
 
+def _clean_for_similarity(text):
+    if not isinstance(text, str):
+        return ""
+    text = re.sub(r"^#.*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"[，。！？、；：“”‘’（）《》【】\[\]{}…,.!?;:\"'()<>-]", "", text)
+    return text
+
+
+def _char_ngrams_for_similarity(text, n=12):
+    cleaned = _clean_for_similarity(text)
+    if len(cleaned) < n:
+        return set()
+    return {cleaned[i:i + n] for i in range(0, len(cleaned) - n + 1)}
+
+
+def _sentence_similarity_ratio(reference_text, generated_text):
+    ref_sentences = [
+        _clean_for_similarity(s)
+        for s in re.split(r"[。！？!?；;]\s*", reference_text or "")
+        if len(_clean_for_similarity(s)) >= 12
+    ]
+    gen_clean = _clean_for_similarity(generated_text)
+    if not ref_sentences or not gen_clean:
+        return 0.0
+    hits = 0
+    for sentence in ref_sentences:
+        probe = sentence[:28] if len(sentence) > 28 else sentence
+        if len(probe) >= 12 and probe in gen_clean:
+            hits += 1
+    return round(hits / max(1, len(ref_sentences)), 3)
+
+
+def _reference_similarity_thresholds(rules=None):
+    cfg = (rules or {}).get("reference_similarity", {}) if isinstance(rules, dict) else {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {
+        "ngram_overlap_threshold": float(
+            cfg.get("ngram_overlap_threshold", REFERENCE_SIMILARITY_NGRAM_OVERLAP)
+        ),
+        "sentence_reuse_threshold": float(
+            cfg.get("sentence_reuse_threshold", REFERENCE_SIMILARITY_SENTENCE_REUSE)
+        ),
+        "overlap_count_threshold": int(
+            cfg.get("overlap_count_threshold", REFERENCE_SIMILARITY_OVERLAP_COUNT)
+        ),
+    }
+
+
+def analyze_reference_similarity(reference_text, generated_text, rules=None):
+    """检测生成稿与参考章的表达相似度，重点抓连续字串和句子片段复用。"""
+    ref_ngrams = _char_ngrams_for_similarity(reference_text, n=12)
+    gen_ngrams = _char_ngrams_for_similarity(generated_text, n=12)
+    if not ref_ngrams or not gen_ngrams:
+        return {
+            "ngram_overlap": 0.0,
+            "sentence_reuse": 0.0,
+            "too_similar": False,
+            "matched_samples": [],
+        }
+    overlap = ref_ngrams & gen_ngrams
+    ngram_overlap = round(len(overlap) / max(1, min(len(ref_ngrams), len(gen_ngrams))), 3)
+    sentence_reuse = _sentence_similarity_ratio(reference_text, generated_text)
+    samples = sorted(overlap, key=len, reverse=True)[:12]
+    thresholds = _reference_similarity_thresholds(rules)
+    too_similar = (
+        ngram_overlap >= thresholds["ngram_overlap_threshold"]
+        or sentence_reuse >= thresholds["sentence_reuse_threshold"]
+        or len(overlap) >= thresholds["overlap_count_threshold"]
+    )
+    return {
+        "ngram_overlap": ngram_overlap,
+        "sentence_reuse": sentence_reuse,
+        "overlap_count": len(overlap),
+        "thresholds": thresholds,
+        "too_similar": too_similar,
+        "matched_samples": samples,
+    }
+
+
+def _plot_fidelity_min_score(rules=None):
+    if isinstance(rules, dict):
+        try:
+            return int(rules.get("plot_fidelity_min_score", PLOT_FIDELITY_MIN_SCORE))
+        except Exception:
+            return PLOT_FIDELITY_MIN_SCORE
+    return PLOT_FIDELITY_MIN_SCORE
+
+
+def evaluate_plot_fidelity_with_outline(
+    reference_plot_outline,
+    chapter_content,
+    chapter_number,
+    model="deepseek-chat",
+    min_score=80,
+):
+    """检查生成稿是否偏离结构骨架。"""
+    if not reference_plot_outline:
+        return {"score": 100, "pass": True, "issues": [], "suggestions": []}
+    prompt = (
+        f"请检查第 {chapter_number} 章生成稿是否忠实覆盖结构功能骨架，输出 JSON。\n"
+        "字段必须为：\n"
+        "{\n"
+        '  "score": number,\n'
+        '  "pass": bool,\n'
+        '  "missing_events": [string],\n'
+        '  "drift_issues": [string],\n'
+        '  "wrong_added_facts": [string],\n'
+        '  "suggestions": [string]\n'
+        "}\n\n"
+        "评分规则：\n"
+        "- 100：结构功能、因果位置、人物功能、结尾功能完整一致。\n"
+        "- 80-99：有轻微遗漏或弱化，但不改变主线结构结果。\n"
+        "- 60-79：缺少关键功能节点、因果位置变弱或结尾功能有偏差。\n"
+        "- 0-59：改变主线结构、反转关键因果、替换结局功能或新增破坏结构的大事件。\n"
+        f"- pass 仅当 score >= {min_score} 且无关键剧情反转时为 true。\n\n"
+        f"【结构功能骨架】\n```json\n{reference_plot_outline}\n```\n\n"
+        f"【生成稿】\n{chapter_content[:10000]}"
+    )
+    messages = [
+        {"role": "system", "content": "你是严格的结构一致性审计器，只检查结构骨架覆盖，不评价文采。输出合法 JSON。"},
+        {"role": "user", "content": prompt},
+    ]
+    raw = call_deepseek_api(
+        messages,
+        model,
+        max_tokens=1100,
+        temperature=0.05,
+        response_format={"type": "json_object"},
+    )
+    if not raw:
+        return {"score": 0, "pass": False, "issues": ["结构骨架审计失败"], "suggestions": []}
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("plot fidelity output is not object")
+        score = int(parsed.get("score", 0))
+        missing = parsed.get("missing_events", [])
+        drift = parsed.get("drift_issues", [])
+        added = parsed.get("wrong_added_facts", [])
+        suggestions = parsed.get("suggestions", [])
+        issues = []
+        for vals in (missing, drift, added):
+            if isinstance(vals, list):
+                issues.extend(str(v) for v in vals if str(v).strip())
+        passed = bool(parsed.get("pass", False)) and score >= min_score
+        return {
+            "score": score,
+            "pass": passed,
+            "missing_events": missing if isinstance(missing, list) else [],
+            "drift_issues": drift if isinstance(drift, list) else [],
+            "wrong_added_facts": added if isinstance(added, list) else [],
+            "issues": issues,
+            "suggestions": suggestions if isinstance(suggestions, list) else [],
+        }
+    except Exception:
+        return {"score": 0, "pass": False, "issues": ["结构骨架审计 JSON 解析失败"], "suggestions": []}
+
+
+def revise_for_plot_fidelity(
+    reference_plot_outline,
+    chapter_content,
+    plot_report,
+    chapter_number,
+    chapter_plan_text="",
+    domain_text="",
+    model="deepseek-chat",
+):
+    """按结构骨架审计结果修正文稿，优先补齐缺失功能节点与纠正偏离。"""
+    report_json = json.dumps(plot_report, ensure_ascii=False, indent=2)
+    prompt = (
+        f"请修订第 {chapter_number} 章，使其重新贴合结构功能骨架。\n"
+        "硬要求：\n"
+        "1) 补齐 missing_events，纠正 drift_issues，删除或弱化 wrong_added_facts。\n"
+        "2) 不要照抄结构骨架或参考原文，要写成自然小说正文。\n"
+        "3) 保持当前正文已有的表达与实体差异，不要为了贴合结构而改回参考章句式或实体体系。\n"
+        "4) 只输出完整修订后章节。\n\n"
+        f"【结构骨架】\n```json\n{reference_plot_outline}\n```\n\n"
+        f"【剧情偏离报告】\n{report_json}\n\n"
+        f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
+        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
+        f"【当前正文】\n{chapter_content}"
+    )
+    messages = [
+        {"role": "system", "content": "你是小说结构修订编辑，优先修正结构偏离，同时保持表达和实体体系与参考文拉开距离。"},
+        {"role": "user", "content": prompt},
+    ]
+    revised = call_deepseek_api(messages, model, max_tokens=len(chapter_content) + 1600, temperature=0.42)
+    if not revised:
+        return chapter_content
+    revised = revised.strip()
+    if revised and not revised.startswith("# "):
+        revised = f"# 第{chapter_number}章 修订稿\n\n{revised}"
+    return revised
+
+
+def rewrite_for_expression_distance(
+    reference_text,
+    chapter_content,
+    similarity_report,
+    chapter_number,
+    chapter_plan_text="",
+    domain_text="",
+    model="deepseek-chat",
+):
+    """保留剧情事实，重写表达结构，专门处理与参考章过像的问题。"""
+    report_json = json.dumps(similarity_report, ensure_ascii=False, indent=2)
+    prompt = (
+        f"请对第 {chapter_number} 章做一次“剧情不变、表达降重”的完整重写。\n"
+        "目标：降低与参考章的连续字串、句式骨架、段落推进和开头/结尾相似度。\n\n"
+        "硬要求：\n"
+        "1) 保留当前正文里的主事件、人物动机、因果关系和结尾状态。\n"
+        "2) 重排镜头入口、动作承接、对话切入顺序和段落节奏；同一事件换一种现场展开。\n"
+        "3) 禁止连续 12 个字以上与参考章一致，尤其避开 matched_samples 中的表达。\n"
+        "4) 不要新增改变剧情的关键事实，不要改人物关系结果。\n"
+        "5) 只输出修订后的完整章节，标题格式仍为 `# 第N章 副题`。\n\n"
+        f"【相似度报告】\n{report_json}\n\n"
+        f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
+        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
+        f"【参考章片段（只用于避开重复表达，不得仿句）】\n{(reference_text or '')[:1200]}\n\n"
+        f"【待降重正文】\n{chapter_content}"
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是小说降重改稿编辑。你的任务不是润色得更像参考文，"
+                "而是在剧情不变的前提下主动拉开表达距离，避免句式和段落同构。"
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ]
+    rewritten = call_deepseek_api(
+        messages,
+        model,
+        max_tokens=len(chapter_content) + 1600,
+        temperature=0.58,
+    )
+    if not rewritten:
+        return chapter_content
+    rewritten = rewritten.strip()
+    if rewritten and not rewritten.startswith("# "):
+        rewritten = f"# 第{chapter_number}章 修订稿\n\n{rewritten}"
+    return rewritten
+
+
 def anti_ai_rewrite_with_reference(
     reference_text,
     chapter_content,
@@ -84,7 +339,7 @@ def anti_ai_rewrite_with_reference(
         f"6) 必须优先修复【规则命中】中的问题，逐项消除。\n"
         f"7) 仅输出修订后的完整章节。\n\n"
         f"{findings_text}"
-        f"【原文风格参考片段】\n{(reference_text or '')[:2500]}\n\n"
+        f"【参考文风格指标（只用于节奏差异判断，不得仿句）】\n{json.dumps(_basic_style_metrics(reference_text), ensure_ascii=False, indent=2)}\n\n"
         f"【风格差异对比(JSON)】\n{json.dumps(style_compare, ensure_ascii=False, indent=2)}\n\n"
         f"【既有风格分析（节选）】\n{style_snip if style_snip else '无'}\n\n"
         f"【本章意图规划】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
@@ -95,7 +350,7 @@ def anti_ai_rewrite_with_reference(
         {
             "role": "system",
             "content": (
-                "你是资深网文改稿编辑：保留剧情骨架，专门打掉模板腔、说明腔、排比与段尾万能升华。"
+                "你是资深网文改稿编辑：保留结构骨架，专门打掉模板腔、说明腔、排比与段尾万能升华。"
                 "改完要像人在连载站点直接发章——允许碎、糙、打断，不要改成语文阅读题标准答案。"
                 "参考原文片段只借语感与节奏，不要全文仿句式堆砌。"
             ),
@@ -329,6 +584,7 @@ def audit_and_revise_until_pass(
     rules,
     recent_chapter_texts=None,
     reference_text="",
+    reference_plot_outline="",
     chapter_plan_text="",
     domain_text="",
     author_intent_text="",
@@ -346,6 +602,8 @@ def audit_and_revise_until_pass(
     max_rounds = max(1, max_rounds)
     current = chapter_content
     last_audit = {"total_score": 0, "pass": False, "issues": ["未审计"]}
+    similarity_rewrite_used = False
+    plot_min_score = _plot_fidelity_min_score(rules)
 
     def _pick_focus_dimensions(dimension_scores):
         if not isinstance(dimension_scores, dict) or not dimension_scores:
@@ -376,10 +634,45 @@ def audit_and_revise_until_pass(
             ai_trace_score = int((last_audit.get("dimension_scores", {}) or {}).get("ai_trace", 0))
         except Exception:
             ai_trace_score = 0
-        passed = bool(last_audit.get("pass", False)) and score >= pass_threshold and ai_trace_score >= ai_trace_hard_threshold
+        similarity_report = (
+            analyze_reference_similarity(reference_text, current, rules=rules)
+            if reference_text
+            else {"too_similar": False, "ngram_overlap": 0.0, "sentence_reuse": 0.0}
+        )
+        plot_report = evaluate_plot_fidelity_with_outline(
+            reference_plot_outline,
+            current,
+            chapter_number,
+            model=analysis_model,
+            min_score=plot_min_score,
+        )
+        similarity_ok = not bool(similarity_report.get("too_similar", False))
+        plot_ok = bool(plot_report.get("pass", True))
+        passed = (
+            bool(last_audit.get("pass", False))
+            and score >= pass_threshold
+            and ai_trace_score >= ai_trace_hard_threshold
+            and similarity_ok
+            and plot_ok
+        )
         print(
             f"规则审计得分: {score} (总阈值: {pass_threshold}) / ai_trace: {ai_trace_score} (硬阈值: {ai_trace_hard_threshold})，轮次: {round_idx}/{max_rounds}"
         )
+        if reference_text:
+            print(
+                "参考相似度: "
+                f"ngram_overlap={similarity_report.get('ngram_overlap', 0)} / "
+                f"sentence_reuse={similarity_report.get('sentence_reuse', 0)} / "
+                f"overlap_count={similarity_report.get('overlap_count', 0)} / "
+                f"{'过高' if not similarity_ok else '通过'}"
+            )
+        if reference_plot_outline:
+            print(
+                f"结构骨架贴合: {plot_report.get('score', 0)} "
+                f"(阈值: {plot_min_score}) / {'偏离' if not plot_ok else '通过'}"
+            )
+        last_audit["reference_similarity"] = similarity_report
+        last_audit["plot_fidelity"] = plot_report
         if passed:
             return {"passed": True, "content": current, "last_audit": last_audit}
         # 最后一轮仅差少量分数时，允许近阈值放行，避免长时间重跑后仍完全不落盘
@@ -387,6 +680,8 @@ def audit_and_revise_until_pass(
             round_idx == max_rounds
             and score >= max(0, pass_threshold - AUDIT_NEAR_PASS_DELTA)
             and ai_trace_score >= ai_trace_hard_threshold
+            and similarity_ok
+            and plot_ok
         ):
             print(
                 f"规则审计近阈值放行: {score} (阈值 {pass_threshold}, 容差 {AUDIT_NEAR_PASS_DELTA})"
@@ -394,6 +689,41 @@ def audit_and_revise_until_pass(
             return {"passed": True, "content": current, "last_audit": last_audit}
         if round_idx == max_rounds:
             break
+
+        if reference_plot_outline and not plot_ok:
+            issues = plot_report.get("issues", []) or []
+            suggestions = plot_report.get("suggestions", []) or []
+            last_audit["issues"] = (last_audit.get("issues", []) or []) + [
+                f"[plot_fidelity] {item}" for item in issues
+            ]
+            last_audit["suggestions"] = (last_audit.get("suggestions", []) or []) + [
+                f"[plot_fidelity] {item}" for item in suggestions
+            ]
+            current = revise_for_plot_fidelity(
+                reference_plot_outline,
+                current,
+                plot_report,
+                chapter_number,
+                chapter_plan_text=chapter_plan_text,
+                domain_text=domain_text,
+                model=generation_model,
+            )
+            print("结构骨架贴合未达标，已执行一次结构纠偏修订。")
+            continue
+
+        if reference_text and not similarity_ok and not similarity_rewrite_used:
+            current = rewrite_for_expression_distance(
+                reference_text,
+                current,
+                similarity_report,
+                chapter_number,
+                chapter_plan_text=chapter_plan_text,
+                domain_text=domain_text,
+                model=generation_model,
+            )
+            similarity_rewrite_used = True
+            print("参考相似度过高，已执行一次剧情不变的表达降重重写。")
+            continue
 
         # 将去 AI 味作为 ai_trace 维度的专属修订策略并入唯一审计循环
         if ENABLE_ANTI_AI_REWRITE:

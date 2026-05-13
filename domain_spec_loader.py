@@ -14,7 +14,7 @@ from config import (
 def load_story_domain_text(domain_dir=None, max_chars=None):
     """读取 story_domain 下所有 .md（排除 _ 前缀），按文件名排序拼接。
 
-    max_chars: 覆盖默认 MAX_DOMAIN_PROMPT_CHARS，用于严格仿写等场景压缩注入。
+    max_chars: 覆盖默认 MAX_DOMAIN_PROMPT_CHARS，用于严格结构适配等场景压缩注入。
     """
     base = domain_dir or STORY_DOMAIN_DIR
     if not os.path.isdir(base):

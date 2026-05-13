@@ -16,7 +16,12 @@ from config import (
     MAX_FOCUS_STRICT_CHARS,
 )
 from context_manager import get_current_context, update_story_context_after_chapter
-from ai_handler import analyze_writing_style, plan_chapter_with_ai, generate_chapter_content
+from ai_handler import (
+    analyze_writing_style,
+    plan_chapter_with_ai,
+    generate_chapter_content,
+    extract_plot_outline_from_reference,
+)
 from audit_pipeline import audit_and_revise_until_pass
 from knowledge_sync import extract_domain_updates
 from domain_spec_loader import (
@@ -110,19 +115,86 @@ def load_recent_output_chapters(output_dir, chapter_number, window=5):
     return texts
 
 
-def write_runtime_artifacts(chapter_number, chapter_plan_text, current_context, trace_data):
+def _runtime_path(chapter_number, suffix):
+    return os.path.join(RUNTIME_DIR, f"chapter-{chapter_number:04d}.{suffix}")
+
+
+def _read_runtime_text(chapter_number, suffix):
+    path = _runtime_path(chapter_number, suffix)
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _write_runtime_text(chapter_number, suffix, text):
+    if not text:
+        return
+    try:
+        os.makedirs(RUNTIME_DIR, exist_ok=True)
+        with open(_runtime_path(chapter_number, suffix), "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception as e:
+        print(f"警告：写入 runtime 文本工件失败 ({suffix}): {e}")
+
+
+def load_cached_outline(chapter_number):
+    path = _runtime_path(chapter_number, "outline.json")
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            parsed = json.load(f)
+        if isinstance(parsed, dict) and "raw_outline" in parsed:
+            return str(parsed.get("raw_outline") or "").strip()
+        return json.dumps(parsed, ensure_ascii=False, indent=2)
+    except Exception:
+        return ""
+
+
+def write_runtime_outline(chapter_number, reference_plot_outline):
+    """单独落盘结构骨架，便于生成失败时也能排查抽取质量。"""
+    if not reference_plot_outline:
+        return
+    try:
+        os.makedirs(RUNTIME_DIR, exist_ok=True)
+        outline_path = os.path.join(RUNTIME_DIR, f"chapter-{chapter_number:04d}.outline.json")
+        try:
+            parsed = json.loads(reference_plot_outline)
+        except Exception:
+            parsed = {"raw_outline": reference_plot_outline}
+        with open(outline_path, "w", encoding="utf-8") as f:
+            json.dump(parsed, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"警告：写入结构骨架 runtime 工件失败: {e}")
+
+
+def write_runtime_artifacts(
+    chapter_number,
+    chapter_plan_text,
+    current_context,
+    trace_data,
+    reference_plot_outline="",
+    writing_style="",
+):
     """写入 runtime 工件，便于排查“为什么这样写”。"""
     try:
         os.makedirs(RUNTIME_DIR, exist_ok=True)
         intent_path = os.path.join(RUNTIME_DIR, f"chapter-{chapter_number:04d}.intent.md")
         context_path = os.path.join(RUNTIME_DIR, f"chapter-{chapter_number:04d}.context.json")
         trace_path = os.path.join(RUNTIME_DIR, f"chapter-{chapter_number:04d}.trace.json")
+        outline_path = os.path.join(RUNTIME_DIR, f"chapter-{chapter_number:04d}.outline.json")
 
         intent_text = (chapter_plan_text or "")
         if len(intent_text) > MAX_RUNTIME_INTENT_CHARS:
             intent_text = intent_text[:MAX_RUNTIME_INTENT_CHARS] + "\n\n…（intent 已截断）"
         with open(intent_path, "w", encoding="utf-8") as f:
             f.write(intent_text)
+        if writing_style:
+            _write_runtime_text(chapter_number, "style.md", writing_style)
 
         # context 快照降载：超限时只保留高价值字段
         snapshot = current_context
@@ -141,6 +213,13 @@ def write_runtime_artifacts(chapter_number, chapter_plan_text, current_context, 
             json.dump(snapshot, f, ensure_ascii=False, indent=2)
         with open(trace_path, "w", encoding="utf-8") as f:
             json.dump(trace_data, f, ensure_ascii=False, indent=2)
+        if reference_plot_outline:
+            try:
+                parsed_outline = json.loads(reference_plot_outline)
+            except Exception:
+                parsed_outline = {"raw_outline": reference_plot_outline}
+            with open(outline_path, "w", encoding="utf-8") as f:
+                json.dump(parsed_outline, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"警告：写入 runtime 工件失败: {e}")
 
@@ -154,7 +233,13 @@ def cleanup_runtime_artifacts():
         for name in os.listdir(RUNTIME_DIR):
             if not name.startswith("chapter-"):
                 continue
-            if not (name.endswith(".intent.md") or name.endswith(".context.json") or name.endswith(".trace.json")):
+            if not (
+                name.endswith(".intent.md")
+                or name.endswith(".context.json")
+                or name.endswith(".trace.json")
+                or name.endswith(".outline.json")
+                or name.endswith(".style.md")
+            ):
                 continue
             prefix = name.split(".", 1)[0]  # chapter-0001
             try:
@@ -299,13 +384,21 @@ def _load_reference_chapter_from_input(input_dir, chapter_number):
     return content
 
 
-def process_chapter(chapter_number, input_dir, output_dir, length, strict_source_plot=True):
-    """仿写单章：对照 input/{n}.md 生成 output/{n}.md（非扩写、非脱离参考的新故事）。
+def process_chapter(
+    chapter_number,
+    input_dir,
+    output_dir,
+    length,
+    strict_source_plot=True,
+    force_reanalyze=False,
+    analyze_only=False,
+):
+    """同结构改编单章：对照 input/{n}.md 生成 output/{n}.md（保留结构功能，实体表达可改）。
 
-    strict_source_plot: True（默认）时衔接 input 原作上一章、规划/生成锁定参考情节、
+    strict_source_plot: True（默认）时衔接 input 原作上一章、规划/生成锁定结构骨架、
     不把生成稿反写进 story_context / 不写 story_domain 自动增量。False 时为实验模式。
     """
-    print(f"\n--- 处理章节 {chapter_number}（仿写） ---")
+    print(f"\n--- 处理章节 {chapter_number}（同结构改编） ---")
     input_filepath = os.path.join(input_dir, f"{chapter_number}.md")
     output_filepath = os.path.join(output_dir, f"{chapter_number}.md")
 
@@ -332,14 +425,34 @@ def process_chapter(chapter_number, input_dir, output_dir, length, strict_source
         )
         return False
 
+    reference_plot_outline = ""
+    if not force_reanalyze:
+        reference_plot_outline = load_cached_outline(chapter_number)
+        if reference_plot_outline:
+            print(f"已复用缓存结构骨架: {_runtime_path(chapter_number, 'outline.json')}")
+    if not reference_plot_outline:
+        reference_plot_outline = extract_plot_outline_from_reference(
+            original_content,
+            chapter_number,
+            strict_source_plot=strict_source_plot,
+        )
+        if reference_plot_outline:
+            print("已从参考章抽取结构骨架，正文生成将基于骨架改编以降低相似度。")
+            write_runtime_outline(chapter_number, reference_plot_outline)
+    if not reference_plot_outline:
+        print("警告：结构骨架抽取失败，正文生成将使用极短参考结构兜底。")
+
     previous_chapter_content = None
+    next_chapter_preview = _load_reference_chapter_from_input(input_dir, chapter_number + 1) or ""
+    if next_chapter_preview:
+        print(f"已加载下一章开头作为结尾连续性约束: {os.path.join(input_dir, f'{chapter_number + 1}.md')}")
     if chapter_number > 1:
         if strict_source_plot:
             prev_ref = _load_reference_chapter_from_input(input_dir, chapter_number - 1)
             if prev_ref:
                 previous_chapter_content = prev_ref
                 print(
-                    f"仿写衔接：使用 input 原作上一章 {os.path.join(input_dir, f'{chapter_number - 1}.md')}"
+                    f"同结构改编衔接：使用 input 原作上一章 {os.path.join(input_dir, f'{chapter_number - 1}.md')}"
                 )
             else:
                 print(
@@ -355,7 +468,13 @@ def process_chapter(chapter_number, input_dir, output_dir, length, strict_source
                 print(f"警告：未找到上一章 output {prev_output_filepath}，无衔接片段。")
 
     # 2. 分析写作风格 (基于原始章节)
-    writing_style = analyze_writing_style(original_content)
+    writing_style = "" if force_reanalyze else _read_runtime_text(chapter_number, "style.md")
+    if writing_style:
+        print(f"已复用缓存风格分析: {_runtime_path(chapter_number, 'style.md')}")
+    else:
+        writing_style = analyze_writing_style(original_content)
+        if writing_style:
+            _write_runtime_text(chapter_number, "style.md", writing_style)
     if not writing_style:
         print("错误：无法分析写作风格，使用默认风格 '幽默吐槽'。")
         writing_style = "幽默吐槽" # 提供一个回退
@@ -364,6 +483,17 @@ def process_chapter(chapter_number, input_dir, output_dir, length, strict_source
 
     # 3. 获取当前上下文
     current_context = get_current_context()
+    if strict_source_plot and int(current_context.get("last_generated_chapter", 0) or 0) >= chapter_number:
+        current_context = json.loads(json.dumps(current_context, ensure_ascii=False))
+        current_context["last_generated_chapter"] = chapter_number - 1
+        current_context["recent_plot_summary"] = ""
+        summaries = current_context.get("recent_chapter_summaries", [])
+        if isinstance(summaries, list):
+            current_context["recent_chapter_summaries"] = [
+                item for item in summaries
+                if not isinstance(item, dict) or int(item.get("chapter", 0) or 0) < chapter_number
+            ]
+        print("严格结构适配：重跑当前/已生成章节时，已忽略该章及之后的生成态摘要。")
     audit_rules = load_audit_rules()
     audit_requirements_text = build_audit_requirements_for_writing(
         audit_rules, strict_imitation=strict_source_plot
@@ -385,25 +515,40 @@ def process_chapter(chapter_number, input_dir, output_dir, length, strict_source
         print("已加载近期焦点: current_focus.md")
 
     # 4. 先做本章意图规划，再生成正文
-    chapter_plan_text = plan_chapter_with_ai(
-        current_context,
-        chapter_number,
-        previous_chapter_content=previous_chapter_content,
-        author_intent_text=author_intent_text,
-        current_focus_text=current_focus_text,
-        reference_chapter_text=original_content,
-        strict_source_plot=strict_source_plot,
-    )
+    chapter_plan_text = "" if force_reanalyze else _read_runtime_text(chapter_number, "intent.md")
+    if chapter_plan_text:
+        print(f"已复用缓存章节意图: {_runtime_path(chapter_number, 'intent.md')}")
+    else:
+        chapter_plan_text = plan_chapter_with_ai(
+            current_context,
+            chapter_number,
+            previous_chapter_content=previous_chapter_content,
+            next_chapter_preview=next_chapter_preview,
+            author_intent_text=author_intent_text,
+            current_focus_text=current_focus_text,
+            reference_chapter_text=original_content,
+            strict_source_plot=strict_source_plot,
+        )
+        if chapter_plan_text:
+            _write_runtime_text(chapter_number, "intent.md", chapter_plan_text)
     if chapter_plan_text:
         print("本章意图规划完成，将用于约束正文生成焦点。")
     else:
         print("警告：本章意图规划失败，将按原有路径直接生成正文。")
+
+    if analyze_only:
+        print(
+            f"分析模式完成：已准备第 {chapter_number} 章的风格分析、结构骨架与章节意图；"
+            "未生成正文、未执行审计、未更新故事上下文。"
+        )
+        return True
 
     new_chapter_content = generate_chapter_content(
         current_context,
         writing_style,
         length,
         previous_chapter_content,
+        next_chapter_preview,
         target_chapter_number=chapter_number,
         domain_text=domain_text,
         chapter_plan_text=chapter_plan_text,
@@ -411,6 +556,7 @@ def process_chapter(chapter_number, input_dir, output_dir, length, strict_source
         current_focus_text=current_focus_text,
         audit_requirements_text=audit_requirements_text,
         reference_chapter_text=original_content,
+        reference_plot_outline=reference_plot_outline,
         strict_source_plot=strict_source_plot,
     )
     if not new_chapter_content:
@@ -426,6 +572,7 @@ def process_chapter(chapter_number, input_dir, output_dir, length, strict_source
         audit_rules,
         recent_chapter_texts=recent_chapter_texts,
         reference_text=original_content,
+        reference_plot_outline=reference_plot_outline,
         chapter_plan_text=chapter_plan_text,
         domain_text=domain_text,
         author_intent_text=author_intent_text,
@@ -451,9 +598,12 @@ def process_chapter(chapter_number, input_dir, output_dir, length, strict_source
             "has_current_focus": bool(current_focus_text),
             "audit_score": audit_gate_result.get("last_audit", {}).get("total_score", 0),
             "audit_passed": bool(audit_gate_result.get("passed", False)),
+            "has_reference_plot_outline": bool(reference_plot_outline),
             "reference_file": input_filepath,
             "output_file": output_filepath,
         },
+        reference_plot_outline=reference_plot_outline,
+        writing_style=writing_style,
     )
     cleanup_runtime_artifacts()
 

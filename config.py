@@ -59,7 +59,7 @@ AUDIT_RULES_FILE = 'audit_rules.json'
 MAX_DOMAIN_PROMPT_CHARS = 8000
 MAX_AUTHOR_INTENT_CHARS = 3000
 MAX_CURRENT_FOCUS_CHARS = 2000
-# 严格仿写（STRICT_SOURCE_PLOT）时进一步压缩，减轻「说明书」式上下文抬高 AI 率
+# 严格结构适配（STRICT_SOURCE_PLOT）时进一步压缩，减轻「说明书」式上下文抬高 AI 率
 MAX_DOMAIN_STRICT_CHARS = int(os.environ.get("MAX_DOMAIN_STRICT_CHARS", "3400"))
 MAX_AUTHOR_STRICT_CHARS = int(os.environ.get("MAX_AUTHOR_STRICT_CHARS", "900"))
 MAX_FOCUS_STRICT_CHARS = int(os.environ.get("MAX_FOCUS_STRICT_CHARS", "480"))
@@ -120,7 +120,7 @@ STYLE_ANALYSIS_TEMPERATURE = 0.05
 # 处理章节内容时传递给 AI 的最大字符数，防止输入过长
 MAX_CHAPTER_CONTENT_LENGTH = 6000
 
-# 项目定位为「仿写」：严格跟 input 参考章情节；衔接上一章读原作、生成后不把生成稿反写进设定。
+# 项目定位为「同结构改编」：严格跟 input 参考章结构骨架；衔接上一章读原作、生成后不把生成稿反写进设定。
 # 默认开启。实验/同人自由续写可设 STRICT_SOURCE_PLOT=0 或命令行 --no_strict_source_plot。
 STRICT_SOURCE_PLOT = os.environ.get("STRICT_SOURCE_PLOT", "1").strip() in {"1", "true", "True", "YES", "yes"}
 
@@ -130,6 +130,13 @@ ANTI_AI_MAX_ROUNDS = 2
 AUDIT_MAX_REVISE_ROUNDS = 3
 # 最后一轮若仅差少量分数，允许“近阈值放行”以避免长时间重跑后仍不落盘
 AUDIT_NEAR_PASS_DELTA = 3
+
+# --- 参考相似度与结构骨架贴合 ---
+# 可被 audit_rules.json 覆盖；这里提供环境变量默认值，便于不同题材/长度快速调参。
+REFERENCE_SIMILARITY_NGRAM_OVERLAP = float(os.environ.get("REFERENCE_SIMILARITY_NGRAM_OVERLAP", "0.045"))
+REFERENCE_SIMILARITY_SENTENCE_REUSE = float(os.environ.get("REFERENCE_SIMILARITY_SENTENCE_REUSE", "0.08"))
+REFERENCE_SIMILARITY_OVERLAP_COUNT = int(os.environ.get("REFERENCE_SIMILARITY_OVERLAP_COUNT", "80"))
+PLOT_FIDELITY_MIN_SCORE = int(os.environ.get("PLOT_FIDELITY_MIN_SCORE", "80"))
 
 # --- 文件增长治理（参考 inkos 的保留窗口/压缩思路） ---
 # runtime 目录仅保留最近 N 章的工件（intent/context/trace）

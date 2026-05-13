@@ -2,19 +2,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Context/runtime artifacts
-story_context.json
-pruned_context_archive.json
-runtime/
 
-# 用户数据与生成物（剧情与输出不入库）
-input_chapters/
-output_chapters/
-chapters_out/
-all/
-combined.md
-*.txt
-!requirements.txt
 
 # Virtual environments
 .venv/
@@ -22,3 +10,4 @@ venv/
 env/
 inkos/
 .env
+input_chapters

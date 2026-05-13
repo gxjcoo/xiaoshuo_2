@@ -17,8 +17,8 @@ def main():
     start_time = time.time() # 记录开始时间
     parser = argparse.ArgumentParser(
         description=(
-            "仿写：对照 input 目录同名参考章生成 output（非自由续写、非另起故事）。"
-            "默认衔接 input 原作上一章并锁定本章参考情节；STRICT_SOURCE_PLOT=0 或 --no_strict_source_plot 可改为实验模式（output 衔接等）。"
+            "同结构改编：对照 input 目录同名参考章生成 output（保留结构功能，实体表达可改）。"
+            "默认衔接 input 原作上一章并锁定本章结构骨架；STRICT_SOURCE_PLOT=0 或 --no_strict_structure_adaptation 可改为实验模式（output 衔接等）。"
         )
     )
     parser.add_argument("--input_dir", type=str, default=DEFAULT_INPUT_DIR, help="包含原始章节文件的目录")
@@ -30,19 +30,57 @@ def main():
     parser.add_argument(
         "--strict_source_plot",
         action="store_true",
-        help="显式开启严格仿写（默认已开；与 STRICT_SOURCE_PLOT=1 同义）。",
+        help="兼容旧参数：显式开启严格结构适配（默认已开；与 STRICT_SOURCE_PLOT=1 同义）。",
+    )
+    parser.add_argument(
+        "--strict_plot_fidelity",
+        action="store_true",
+        help="兼容旧参数：显式开启严格结构适配。",
+    )
+    parser.add_argument(
+        "--strict_structure_adaptation",
+        action="store_true",
+        help="显式开启严格结构适配（推荐新参数名）。",
     )
     parser.add_argument(
         "--no_strict_source_plot",
         action="store_true",
-        help="关闭严格仿写：允许用 output 衔接、生成稿反写上下文与 story_domain 自动增量（实验/同人续写用）。",
+        help="兼容旧参数：关闭严格结构适配（实验/自由改编用）。",
+    )
+    parser.add_argument(
+        "--no_strict_plot_fidelity",
+        action="store_true",
+        help="兼容旧参数：关闭严格结构适配（实验/自由改编用）。",
+    )
+    parser.add_argument(
+        "--no_strict_structure_adaptation",
+        action="store_true",
+        help="关闭严格结构适配：允许用 output 衔接、生成稿反写上下文与 story_domain 自动增量（实验/自由改编用）。",
+    )
+    parser.add_argument(
+        "--force_reanalyze",
+        action="store_true",
+        help="忽略 runtime 中缓存的风格分析、结构骨架和章节意图，重新调用 LLM 分析。",
+    )
+    parser.add_argument(
+        "--analyze_only",
+        action="store_true",
+        help="只生成/复用风格分析、结构骨架和章节意图，不生成正文、不审计、不更新上下文。",
     )
 
     args = parser.parse_args()
     strict_source_plot = bool(STRICT_SOURCE_PLOT)
-    if getattr(args, "strict_source_plot", False):
+    if (
+        getattr(args, "strict_source_plot", False)
+        or getattr(args, "strict_plot_fidelity", False)
+        or getattr(args, "strict_structure_adaptation", False)
+    ):
         strict_source_plot = True
-    if getattr(args, "no_strict_source_plot", False):
+    if (
+        getattr(args, "no_strict_source_plot", False)
+        or getattr(args, "no_strict_plot_fidelity", False)
+        or getattr(args, "no_strict_structure_adaptation", False)
+    ):
         strict_source_plot = False
 
     # 初始化：加载故事上下文
@@ -103,9 +141,13 @@ def main():
 
     print(f"\n=== 开始处理章节范围: {start_chapter} 到 {end_chapter} ===")
     if strict_source_plot:
-        print("模式: 仿写（衔接 input 原作、情节以参考章为准、不据生成稿反写设定）。")
+        print("模式: 同结构改编（衔接 input 原作、结构功能以结构骨架为准、不据生成稿反写设定）。")
     else:
-        print("模式: 实验（非严格仿写）：output 衔接与上下文反写已打开，输出可能偏离 input 参考主线。")
+        print("模式: 实验（非严格结构适配）：output 衔接与上下文反写已打开，输出可能偏离 input 参考结构。")
+    if args.analyze_only:
+        print("分析模式: 只产出 runtime 分析工件，不生成正文。")
+    if args.force_reanalyze:
+        print("重分析模式: 忽略 runtime 缓存，重新生成分析工件。")
 
     # 循环处理指定范围的章节
     all_successful = True
@@ -120,6 +162,8 @@ def main():
             args.output_dir,
             args.length,
             strict_source_plot=strict_source_plot,
+            force_reanalyze=args.force_reanalyze,
+            analyze_only=args.analyze_only,
         )
         chapter_end_time = time.time()
         chapter_duration = chapter_end_time - chapter_start_time
@@ -134,7 +178,8 @@ def main():
             # break # 如果希望失败时中断
         else:
              print(f"章节 {chapter_num} 处理成功。耗时: {chapter_duration:.2f} 秒. (进度: {progress_percent:.1f}%)")
-             time.sleep(30)
+             if not args.analyze_only:
+                 time.sleep(30)
 
     print(f"\n=== 章节处理完成 ({start_chapter} 到 {end_chapter}) ===")
     end_time = time.time() # 记录结束时间

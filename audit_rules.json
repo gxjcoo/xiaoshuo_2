@@ -5,7 +5,13 @@
   "ai_trace_hard_threshold": 80,
   "hard_fail_threshold": 60,
   "max_revise_rounds": 3,
-  "notes": "参考 inkos 多维审计思想：先保一致性与剧情推进，再控 AI 痕迹与可读性。dimension_scores 每项 0-100。",
+  "reference_similarity": {
+    "ngram_overlap_threshold": 0.045,
+    "sentence_reuse_threshold": 0.08,
+    "overlap_count_threshold": 80
+  },
+  "plot_fidelity_min_score": 80,
+  "notes": "参考 inkos 多维审计思想：先保结构功能一致性与推进，再控实体/表达相似度、AI 痕迹与可读性。dimension_scores 每项 0-100。",
   "dimensions": [
     {
       "id": "continuity",
@@ -69,12 +75,24 @@
     },
     {
       "id": "reference_fidelity",
-      "name": "仿写贴合度",
+      "name": "结构骨架贴合度",
+      "weight": 0.05,
+      "requirements": [
+        "与参考章节在结构功能上保持对应，关键功能节点顺序不反转",
+        "禁止新增未铺垫主线设定或关键势力规则",
+        "新增内容仅做细节补强，不篡改既有冲突功能与人物目标功能",
+        "只要求结构功能贴合，不要求原实体名、句式、段落和表达贴合"
+      ]
+    },
+    {
+      "id": "expression_distance",
+      "name": "表达差异度",
       "weight": 0.07,
       "requirements": [
-        "与参考章节在剧情走向上保持同轨，关键事件顺序不反转",
-        "禁止新增未铺垫主线设定或关键势力规则",
-        "新增内容仅做细节补强，不篡改既有冲突与人物目标"
+        "不得连续复用参考章 12 个字以上的表达",
+        "同一事件应换镜头入口、动作承接、对话切入点或段落节奏",
+        "避免沿用参考章开头句、结尾句、标志性比喻和段落推进方式",
+        "保持题材气质与角色口吻，但不要贴着原文换词改写"
       ]
     },
     {
