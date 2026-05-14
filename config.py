@@ -128,6 +128,10 @@ STRICT_SOURCE_PLOT = os.environ.get("STRICT_SOURCE_PLOT", "1").strip() in {"1", 
 # 关闭可设 ENTITY_REWRITE=0 或命令行 --no_entity_rewrite。
 ENTITY_REWRITE = os.environ.get("ENTITY_REWRITE", "1").strip() in {"1", "true", "True", "YES", "yes"}
 
+# 章节间等待秒数：串行批量跑时在相邻两章之间暂停，避免触发 API rate limit。
+# 默认 5 秒；调试时可设为 0 加快迭代；大批量可适当调大。
+INTER_CHAPTER_SLEEP = int(os.environ.get("INTER_CHAPTER_SLEEP", "5"))
+
 # --- 降低 AI 味道配置 ---
 ENABLE_ANTI_AI_REWRITE = True
 ANTI_AI_MAX_ROUNDS = 2

@@ -231,7 +231,7 @@ python split_novel.py path/to/novel.txt -o chapters_out
 python app.py --input_dir input_chapters --output_dir output_chapters --start_chapter 1 --end_chapter 10
 ```
 
-常用：`--chapter N`、`--length 3000`、`--no_strict_structure_adaptation`（实验模式）、`--force_reanalyze`（忽略缓存重分析）、`--analyze_only`（只生成分析工件）、`--no_entity_rewrite`（关闭实体改写）。
+常用：`--chapter N`、`--length 3000`、`--no_strict_structure_adaptation`（实验模式）、`--force_reanalyze`（忽略缓存重分析）、`--analyze_only`（只生成分析工件）、`--no_entity_rewrite`（关闭实体改写）、`--entity_preview`（只扫描实体、打印映射表）、`--sleep N`（章节间等待秒数，默认 5）。
 
 ### 实体改写（默认开启）
 
@@ -251,6 +251,18 @@ ENTITY_REWRITE=0
 ```
 
 如发现自动扫描漏掉某个角色，可手编 `runtime/global_entity_map.json` 的 `characters` 字段直接补条目，后续章节自动生效。
+
+**推荐工作流**：先用 `--entity_preview` 预演，确认映射表无误后再正式跑：
+
+```bash
+# 第一步：预演 — 只扫描实体、打印全局映射表，不生成正文
+python app.py --start_chapter 1 --end_chapter 10 --entity_preview
+# 检查终端输出的映射表，如有问题直接编辑 runtime/global_entity_map.json
+# 第二步：正式跑
+python app.py --start_chapter 1 --end_chapter 10
+```
+
+全局映射表带有来源章节标记（`first_seen_chapter`），方便反查某个新名是哪一章首次引入的。
 
 只分析参考章、生成 runtime 工件但不写正文：
 

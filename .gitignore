@@ -1,13 +1,29 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-
 
 # Virtual environments
 .venv/
 venv/
 env/
 inkos/
+
+# 环境变量（含 API Key，绝不提交）
 .env
-input_chapters
+
+# 原作 / 参考章目录（用户自备，不入仓库）
+input_chapters/
+/*.txt
+
+# 运行产物
+output_chapters/
+chapters_out/
+runtime/
+story_context.json
+pruned_context_archive.json
+all/
+
+# 测试 / 日志
+test_output*.txt
+*.log

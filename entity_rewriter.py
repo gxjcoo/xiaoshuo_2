@@ -2,19 +2,22 @@
 实体改写映射 - 同结构改编的核心降重层
 
 设计要点：
-1. **项目级全局映射**：所有章节共享 runtime/global_entity_map.json，确保
-   同一原名永远映射到同一新名（跨章一致）。
-2. **章节级缓存**：runtime/chapter-XXXX.entity_map.json 仍保留本章扫描出的
-   实体，用于排查。
-3. **分段扫描**：长章按段落分块送进 LLM，避免后半实体被截断。
-4. **硬清洗**：apply_entity_rewrite 按原名长度降序替换，避免短名子串误吞长名；
+1. **项目级全局映射**（runtime/global_entity_map.json）带元数据：
+   {"characters": {"原名": {"new": "新名", "first_seen_chapter": 3}}}
+   确保同一原名跨章永远映射到同一新名，并可反查来源章节。
+2. **章节级缓存**（runtime/chapter-XXXX.entity_map.json）保留扁平映射：
+   {"characters": {"原名": "新名"}}，便于人读和排查。
+3. **格式互通**：apply_entity_rewrite / detect_original_entity_leaks 同时
+   接受扁平格式与带元数据格式，内部统一归一为扁平表。
+4. **分段扫描**：长章按段落分块送进 LLM，避免后半实体被截断。
+5. **硬清洗**：apply_entity_rewrite 按原名长度降序替换，避免短名子串误吞长名；
    detect_original_entity_leaks 输出残留明细，供审计/修订提示用。
 """
 
+import datetime as _dt
 import json
 import os
-import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from config import RUNTIME_DIR, CONTEXT_ANALYSIS_MODEL
 from ai_handler import call_deepseek_api
@@ -23,8 +26,48 @@ ENTITY_CACHE_SUFFIX = "entity_map.json"
 GLOBAL_ENTITY_MAP_FILE = "global_entity_map.json"
 ENTITY_CATEGORIES = ("characters", "places", "events", "objects_animals")
 
+# 章节级映射值类型：str（扁平格式）
+# 全局映射值类型：dict（带元数据）或 str（向后兼容旧格式）
+EntityMapFlat = Dict[str, Dict[str, str]]
+EntityMapRich = Dict[str, Dict[str, Union[str, dict]]]
 
-# ----------------- 路径与 IO -----------------
+
+# =================== 格式转换 ===================
+
+def _normalize_value(v) -> str:
+    """从全局表的条目值中提取 new name（兼容扁平 str 和 rich dict）。"""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict):
+        return str(v.get("new", ""))
+    return ""
+
+
+def flatten_entity_map(entity_map: Union[EntityMapFlat, EntityMapRich, None]) -> EntityMapFlat:
+    """将任意格式映射归一为扁平 {"cat": {"原名": "新名"}}。"""
+    if not isinstance(entity_map, dict):
+        return _empty_map()
+    out: EntityMapFlat = {}
+    for cat in ENTITY_CATEGORIES:
+        out[cat] = {}
+        raw = entity_map.get(cat, {}) or {}
+        if not isinstance(raw, dict):
+            continue
+        for old, v in raw.items():
+            new = _normalize_value(v)
+            if old and new and old != new:
+                out[cat][old] = new
+    return out
+
+
+def _to_rich_entry(new_name: str, chapter_number: int) -> dict:
+    return {
+        "new": new_name,
+        "first_seen_chapter": chapter_number,
+    }
+
+
+# =================== 路径与 IO ===================
 
 def _entity_map_path(chapter_number: int) -> str:
     return os.path.join(RUNTIME_DIR, f"chapter-{chapter_number:04d}.{ENTITY_CACHE_SUFFIX}")
@@ -34,11 +77,11 @@ def _global_entity_map_path() -> str:
     return os.path.join(RUNTIME_DIR, GLOBAL_ENTITY_MAP_FILE)
 
 
-def _empty_map() -> Dict[str, Dict[str, str]]:
+def _empty_map() -> EntityMapFlat:
     return {cat: {} for cat in ENTITY_CATEGORIES}
 
 
-def _ensure_categories(m: Dict) -> Dict[str, Dict[str, str]]:
+def _ensure_categories(m: dict) -> dict:
     if not isinstance(m, dict):
         return _empty_map()
     for cat in ENTITY_CATEGORIES:
@@ -47,79 +90,105 @@ def _ensure_categories(m: Dict) -> Dict[str, Dict[str, str]]:
     return m
 
 
-def load_cached_entity_map(chapter_number: int) -> Optional[Dict[str, Dict[str, str]]]:
+def load_cached_entity_map(chapter_number: int) -> Optional[EntityMapFlat]:
     path = _entity_map_path(chapter_number)
     if not os.path.isfile(path):
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return _ensure_categories(json.load(f))
+            return flatten_entity_map(json.load(f))
     except Exception:
         return None
 
 
-def save_entity_map(chapter_number: int, entity_map: Dict[str, Dict[str, str]]) -> None:
+def save_entity_map(chapter_number: int, entity_map: EntityMapFlat) -> None:
     os.makedirs(RUNTIME_DIR, exist_ok=True)
     with open(_entity_map_path(chapter_number), "w", encoding="utf-8") as f:
-        json.dump(_ensure_categories(entity_map), f, ensure_ascii=False, indent=2)
+        json.dump(flatten_entity_map(entity_map), f, ensure_ascii=False, indent=2)
 
 
-def load_global_entity_map() -> Dict[str, Dict[str, str]]:
-    """加载项目级全局实体映射。"""
+def load_global_entity_map() -> EntityMapRich:
+    """加载项目级全局实体映射（带元数据格式；兼容读取旧扁平格式）。"""
     path = _global_entity_map_path()
     if not os.path.isfile(path):
         return _empty_map()
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return _ensure_categories(json.load(f))
+            raw = _ensure_categories(json.load(f))
+        # 向后兼容：旧扁平格式自动升级为 rich 格式（first_seen_chapter=-1 表示未知）
+        for cat in ENTITY_CATEGORIES:
+            for old, v in list(raw.get(cat, {}).items()):
+                if isinstance(v, str):
+                    raw[cat][old] = {"new": v, "first_seen_chapter": -1}
+        return raw
     except Exception:
         return _empty_map()
 
 
-def save_global_entity_map(entity_map: Dict[str, Dict[str, str]]) -> None:
+def save_global_entity_map(entity_map: EntityMapRich) -> None:
     os.makedirs(RUNTIME_DIR, exist_ok=True)
     with open(_global_entity_map_path(), "w", encoding="utf-8") as f:
         json.dump(_ensure_categories(entity_map), f, ensure_ascii=False, indent=2)
 
 
 def merge_entity_maps(
-    base: Dict[str, Dict[str, str]],
-    incoming: Dict[str, Dict[str, str]],
-) -> Dict[str, Dict[str, str]]:
+    base: Union[EntityMapFlat, EntityMapRich],
+    incoming: Union[EntityMapFlat, EntityMapRich],
+    chapter_number: int = -1,
+) -> Union[EntityMapFlat, EntityMapRich]:
     """以 base 为权威：base 中已有的原名保留原映射；incoming 中新增的才合入。
     同时阻止 incoming 中新名与 base 中现有新名冲突（撞名时丢弃 incoming 的该条）。
+
+    chapter_number: 传入时对新合入条目打上 first_seen_chapter 标记（仅当 base
+    是 rich 格式时有效）。-1 表示未知。
     """
     base = _ensure_categories(json.loads(json.dumps(base or {})))
     if not isinstance(incoming, dict):
         return base
-    # 收集 base 中所有新名，避免重复
+    # 判断 base 是否 rich 格式（第一个非空值是 dict）
+    base_is_rich = False
+    for cat in ENTITY_CATEGORIES:
+        for v in (base.get(cat, {}) or {}).values():
+            base_is_rich = isinstance(v, dict)
+            break
+        if base_is_rich:
+            break
     existing_new_names = set()
     for cat in ENTITY_CATEGORIES:
-        existing_new_names.update(v for v in base.get(cat, {}).values() if isinstance(v, str))
+        for v in (base.get(cat, {}) or {}).values():
+            existing_new_names.add(_normalize_value(v))
     for cat in ENTITY_CATEGORIES:
         new_pairs = incoming.get(cat, {}) or {}
         if not isinstance(new_pairs, dict):
             continue
-        for old, new in new_pairs.items():
-            if not isinstance(old, str) or not isinstance(new, str):
+        for old, v in new_pairs.items():
+            if not isinstance(old, str):
                 continue
+            new_name = _normalize_value(v)
             old = old.strip()
-            new = new.strip()
-            if not old or not new or old == new:
+            new_name = new_name.strip()
+            if not old or not new_name or old == new_name:
                 continue
             if old in base[cat]:
                 continue
-            if new in existing_new_names:
+            if new_name in existing_new_names:
                 continue
-            base[cat][old] = new
-            existing_new_names.add(new)
+            if base_is_rich:
+                # 如果 incoming 本身是 rich 且带 first_seen_chapter 就沿用
+                if isinstance(v, dict) and v.get("first_seen_chapter", -1) > 0:
+                    base[cat][old] = v
+                else:
+                    base[cat][old] = _to_rich_entry(new_name, chapter_number)
+            else:
+                base[cat][old] = new_name
+            existing_new_names.add(new_name)
     return base
 
 
-# ----------------- 实体扫描 -----------------
+# =================== 实体扫描 ===================
 
 def _split_into_chunks(text: str, max_chars: int = 4500) -> List[str]:
-    """按段落把长文切成不超过 max_chars 的若干块，避免一次喂太长。"""
+    """按段落把长文切成不超过 max_chars 的若干块。"""
     if not text:
         return []
     paragraphs = [p for p in text.split("\n") if p.strip()]
@@ -142,11 +211,11 @@ def _split_into_chunks(text: str, max_chars: int = 4500) -> List[str]:
 def _scan_chunk_for_entities(
     chunk: str,
     chapter_number: int,
-    existing_map: Dict[str, Dict[str, str]],
+    existing_map: EntityMapFlat,
     chunk_idx: int,
     chunk_total: int,
-) -> Dict[str, Dict[str, str]]:
-    existing_json = json.dumps(_ensure_categories(existing_map), ensure_ascii=False)
+) -> EntityMapFlat:
+    existing_json = json.dumps(flatten_entity_map(existing_map), ensure_ascii=False)
     prompt = (
         f"请扫描第 {chapter_number} 章参考原文【片段 {chunk_idx}/{chunk_total}】中出现的全部实体名，"
         "为每个**尚未在已有映射中**的实体生成一个风格一致但不同的新名字。\n\n"
@@ -186,7 +255,7 @@ def _scan_chunk_for_entities(
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
             return _empty_map()
-        return _ensure_categories(parsed)
+        return flatten_entity_map(parsed)
     except Exception:
         return _empty_map()
 
@@ -194,8 +263,8 @@ def _scan_chunk_for_entities(
 def extract_entity_map_from_reference(
     reference_text: str,
     chapter_number: int,
-    existing_map: Optional[Dict[str, Dict[str, str]]] = None,
-) -> Dict[str, Dict[str, str]]:
+    existing_map: Optional[Union[EntityMapFlat, EntityMapRich]] = None,
+) -> EntityMapFlat:
     """从参考章扫描实体名，结合 existing_map（通常是全局映射）增量产出本章映射。
 
     返回的是【本章】扫描出的映射（含已有映射里命中的部分），不会原地修改 existing_map。
@@ -203,27 +272,29 @@ def extract_entity_map_from_reference(
     if not reference_text or not reference_text.strip():
         return _empty_map()
 
-    base = _ensure_categories(json.loads(json.dumps(existing_map or {})))
+    base = flatten_entity_map(existing_map)
     chunks = _split_into_chunks(reference_text, max_chars=4500)
     print(f"  实体扫描：第 {chapter_number} 章共 {len(chunks)} 个片段")
 
-    merged = _ensure_categories(json.loads(json.dumps(base)))
+    merged = json.loads(json.dumps(base))
     for idx, chunk in enumerate(chunks, start=1):
         delta = _scan_chunk_for_entities(chunk, chapter_number, merged, idx, len(chunks))
         merged = merge_entity_maps(merged, delta)
 
-    # 只返回参考原文中实际出现过的实体（即过滤掉 base 中无关的历史实体）
+    # 只返回参考原文中实际出现过的实体
     result = _empty_map()
     for cat in ENTITY_CATEGORIES:
         for old, new in merged.get(cat, {}).items():
-            if old and old in reference_text and old != new:
-                result[cat][old] = new
+            new_name = _normalize_value(new)
+            if old and old in reference_text and old != new_name:
+                result[cat][old] = new_name
     return result
 
 
-# ----------------- 文本改写 -----------------
+# =================== 文本改写 ===================
 
-def _flatten_replacements(entity_map: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+def _flatten_replacements(entity_map: Union[EntityMapFlat, EntityMapRich, None]) -> Dict[str, str]:
+    """从任意格式映射提取扁平替换对。"""
     pairs: Dict[str, str] = {}
     if not isinstance(entity_map, dict):
         return pairs
@@ -231,9 +302,10 @@ def _flatten_replacements(entity_map: Dict[str, Dict[str, str]]) -> Dict[str, st
         m = entity_map.get(cat, {}) or {}
         if not isinstance(m, dict):
             continue
-        for old, new in m.items():
-            if not isinstance(old, str) or not isinstance(new, str):
+        for old, v in m.items():
+            if not isinstance(old, str):
                 continue
+            new = _normalize_value(v)
             old = old.strip()
             new = new.strip()
             if not old or not new or old == new:
@@ -242,7 +314,7 @@ def _flatten_replacements(entity_map: Dict[str, Dict[str, str]]) -> Dict[str, st
     return pairs
 
 
-def apply_entity_rewrite(text: str, entity_map: Dict[str, Dict[str, str]]) -> str:
+def apply_entity_rewrite(text: str, entity_map: Union[EntityMapFlat, EntityMapRich, None]) -> str:
     """对文本中已知实体名做全局硬替换。按原名长度降序，避免 '赵无' 先替换吃掉 '赵无恤'。"""
     if not text or not entity_map:
         return text
@@ -259,16 +331,17 @@ def apply_entity_rewrite(text: str, entity_map: Dict[str, Dict[str, str]]) -> st
 
 def detect_original_entity_leaks(
     text: str,
-    entity_map: Dict[str, Dict[str, str]],
+    entity_map: Union[EntityMapFlat, EntityMapRich, None],
 ) -> List[Dict]:
     """检测文本中残留的原实体名。返回 [{entity, category, count, expected}, ...]"""
     if not text or not entity_map:
         return []
     leaks: List[Dict] = []
     for cat in ENTITY_CATEGORIES:
-        for old, new in (entity_map.get(cat, {}) or {}).items():
-            if not isinstance(old, str) or not isinstance(new, str):
+        for old, v in (entity_map.get(cat, {}) or {}).items():
+            if not isinstance(old, str):
                 continue
+            new = _normalize_value(v)
             if not old or old == new:
                 continue
             count = text.count(old)
@@ -293,10 +366,11 @@ def format_entity_leak_report(leaks: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-def format_entity_map_for_prompt(entity_map: Dict[str, Dict[str, str]], max_per_category: int = 0) -> str:
+def format_entity_map_for_prompt(entity_map: Union[EntityMapFlat, EntityMapRich, None], max_per_category: int = 0) -> str:
     """把实体映射格式化成提示词块。max_per_category=0 表示不截断（默认列全部）。"""
     if not entity_map:
         return ""
+    flat = flatten_entity_map(entity_map)
     label = {
         "characters": "角色名",
         "places": "地名",
@@ -305,7 +379,7 @@ def format_entity_map_for_prompt(entity_map: Dict[str, Dict[str, str]], max_per_
     }
     sections: List[str] = []
     for cat in ENTITY_CATEGORIES:
-        pairs = entity_map.get(cat, {}) or {}
+        pairs = flat.get(cat, {}) or {}
         if not pairs:
             continue
         items = list(pairs.items())
@@ -314,3 +388,34 @@ def format_entity_map_for_prompt(entity_map: Dict[str, Dict[str, str]], max_per_
         rendered = "、".join(f"{old}→{new}" for old, new in items)
         sections.append(f"- {label.get(cat, cat)}：{rendered}")
     return "\n".join(sections)
+
+
+# =================== 预览与反查 ===================
+
+def format_global_map_for_preview(global_map: Union[EntityMapFlat, EntityMapRich, None]) -> str:
+    """格式化全局映射表，按类别和来源章节排列，供终端预览。"""
+    if not global_map:
+        return "（全局实体映射为空）"
+    label = {
+        "characters": "角色",
+        "places": "地名",
+        "events": "事件",
+        "objects_animals": "物件/动物",
+    }
+    lines: List[str] = ["=== 全局实体映射 ==="]
+    total = 0
+    for cat in ENTITY_CATEGORIES:
+        entries = (global_map.get(cat, {}) or {})
+        if not entries:
+            continue
+        lines.append(f"\n[{label.get(cat, cat)}] ({len(entries)} 条)")
+        for old, v in entries.items():
+            if isinstance(v, dict):
+                new = v.get("new", "?")
+                ch = v.get("first_seen_chapter", "?")
+                lines.append(f"  {old} → {new}  (首见: 第{ch}章)")
+            else:
+                lines.append(f"  {old} → {v}  (首见: 未知)")
+            total += 1
+    lines.append(f"\n共 {total} 条映射")
+    return "\n".join(lines)

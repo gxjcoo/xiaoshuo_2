@@ -12,9 +12,11 @@ from entity_rewriter import (
     load_global_entity_map,
     save_global_entity_map,
     merge_entity_maps,
+    flatten_entity_map,
     apply_entity_rewrite,
     detect_original_entity_leaks,
     format_entity_leak_report,
+    format_global_map_for_preview,
 )
 
 # 从其他模块导入所需函数和常量
@@ -508,9 +510,9 @@ def process_chapter(
         cached_map = None if force_reanalyze else load_cached_entity_map(chapter_number)
         if cached_map and not force_reanalyze:
             # 缓存仍可能漏抽实体；用全局映射补齐已知映射
-            entity_map = merge_entity_maps(cached_map, global_map)
+            entity_map = merge_entity_maps(cached_map, global_map, chapter_number=chapter_number)
             # 把当前参考章里命中的新映射回写到全局表
-            global_map = merge_entity_maps(global_map, cached_map)
+            global_map = merge_entity_maps(global_map, cached_map, chapter_number=chapter_number)
         else:
             entity_map = extract_entity_map_from_reference(
                 original_content,
@@ -518,8 +520,8 @@ def process_chapter(
                 existing_map=global_map,
             )
             # 用全局表保证「同一原名跨章同译」
-            entity_map = merge_entity_maps(entity_map, global_map)
-            global_map = merge_entity_maps(global_map, entity_map)
+            entity_map = merge_entity_maps(entity_map, global_map, chapter_number=chapter_number)
+            global_map = merge_entity_maps(global_map, entity_map, chapter_number=chapter_number)
         if entity_map:
             save_entity_map(chapter_number, entity_map)
             save_global_entity_map(global_map)
@@ -693,6 +695,13 @@ def process_chapter(
         chapter_plan_text = apply_entity_rewrite(chapter_plan_text, entity_map)
 
     if analyze_only:
+        if entity_rewrite and entity_map:
+            flat = flatten_entity_map(entity_map)
+            total = sum(len(v) for v in flat.values())
+            print(f"本章实体映射: {total} 条（角色 {len(flat.get('characters', {}))}、"
+                  f"地名 {len(flat.get('places', {}))}、"
+                  f"事件 {len(flat.get('events', {}))}、"
+                  f"物件 {len(flat.get('objects_animals', {}))}）")
         print(
             f"分析模式完成：已准备第 {chapter_number} 章的风格分析、结构骨架与章节意图；"
             "未生成正文、未执行审计、未更新故事上下文。"

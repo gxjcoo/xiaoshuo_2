@@ -9,7 +9,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from config import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, STRICT_SOURCE_PLOT, ENTITY_REWRITE
+from config import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, STRICT_SOURCE_PLOT, ENTITY_REWRITE, INTER_CHAPTER_SLEEP, RUNTIME_DIR
 from context_manager import load_story_context # 直接使用返回的上下文
 from chapter_processor import process_chapter, preload_chapter_anchors
 
@@ -77,6 +77,15 @@ def main():
         action="store_true",
         help="关闭实体改写：不再为参考章生成新名映射，正文沿用原作角色/地名。",
     )
+    parser.add_argument(
+        "--entity_preview",
+        action="store_true",
+        help="实体预演：只扫描所有参考章的实体名并打印全局映射表，不生成正文。确认映射无误后再正式跑。",
+    )
+    parser.add_argument(
+        "--sleep", type=int, default=None,
+        help=f"章节间等待秒数（默认 {INTER_CHAPTER_SLEEP}s，也可通过 INTER_CHAPTER_SLEEP 环境变量配置）。",
+    )
 
     args = parser.parse_args()
     strict_source_plot = bool(STRICT_SOURCE_PLOT)
@@ -98,6 +107,8 @@ def main():
         entity_rewrite = True
     if getattr(args, "no_entity_rewrite", False):
         entity_rewrite = False
+
+    inter_chapter_sleep = args.sleep if args.sleep is not None else INTER_CHAPTER_SLEEP
 
     # 初始化：加载故事上下文
     initial_context = load_story_context()
@@ -169,6 +180,46 @@ def main():
     if args.force_reanalyze:
         print("重分析模式: 忽略 runtime 缓存，重新生成分析工件。")
 
+    # --- 实体预演模式 ---
+    if args.entity_preview:
+        if not entity_rewrite:
+            print("错误：--entity_preview 需要实体改写处于开启状态（不要同时传 --no_entity_rewrite）。")
+            sys.exit(1)
+        from entity_rewriter import (
+            load_global_entity_map,
+            save_global_entity_map,
+            extract_entity_map_from_reference,
+            merge_entity_maps,
+            save_entity_map,
+            flatten_entity_map,
+            format_global_map_for_preview,
+        )
+        from chapter_processor import read_chapter_file, reference_still_placeholder
+        global_map = load_global_entity_map()
+        for ch in range(start_chapter, end_chapter + 1):
+            filepath = os.path.join(args.input_dir, f"{ch}.md")
+            if not os.path.isfile(filepath):
+                print(f"  第 {ch} 章：文件不存在，跳过")
+                continue
+            content = read_chapter_file(filepath)
+            if not content or reference_still_placeholder(content, ch):
+                print(f"  第 {ch} 章：占位/空文件，跳过")
+                continue
+            print(f"\n--- 扫描第 {ch} 章实体 ---")
+            chapter_map = extract_entity_map_from_reference(content, ch, existing_map=global_map)
+            if chapter_map:
+                save_entity_map(ch, chapter_map)
+                global_map = merge_entity_maps(global_map, chapter_map, chapter_number=ch)
+                flat = flatten_entity_map(chapter_map)
+                new_count = sum(len(v) for v in flat.values())
+                print(f"  本章扫描到 {new_count} 个实体")
+        save_global_entity_map(global_map)
+        print("\n" + format_global_map_for_preview(global_map))
+        print("\n预演完成。确认映射无误后去掉 --entity_preview 正式运行。")
+        print(f"全局映射已保存到: {os.path.join(RUNTIME_DIR, 'global_entity_map.json')}")
+        print("如需手动修正，可直接编辑该文件后正式跑。")
+        return
+
     # --- 双向校验：预加载所有章节首尾锚点 ---
     chapter_anchors = preload_chapter_anchors(args.input_dir, start_chapter, end_chapter)
 
@@ -203,8 +254,9 @@ def main():
             # break # 如果希望失败时中断
         else:
              print(f"章节 {chapter_num} 处理成功。耗时: {chapter_duration:.2f} 秒. (进度: {progress_percent:.1f}%)")
-             if not args.analyze_only:
-                 time.sleep(30)
+             if not args.analyze_only and inter_chapter_sleep > 0 and chapter_num < end_chapter:
+                 print(f"等待 {inter_chapter_sleep} 秒后继续下一章…")
+                 time.sleep(inter_chapter_sleep)
 
     print(f"\n=== 章节处理完成 ({start_chapter} 到 {end_chapter}) ===")
     end_time = time.time() # 记录结束时间
