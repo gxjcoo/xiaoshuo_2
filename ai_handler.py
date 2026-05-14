@@ -80,6 +80,21 @@ def _reference_prose_snippet(text, max_chars=2600):
     return f"{head.rstrip()}\n\n…(参考原文中部已省略)…\n\n{tail.lstrip()}"
 
 
+def _entity_rewrite_block(enabled: bool, entity_map) -> str:
+    """生成实体改写禁令块"""
+    if not enabled or not entity_map:
+        return ""
+    lines = ["【实体改写禁令（硬约束，违反直接判不合格）】"]
+    for cat, cat_name in [("characters", "角色名"), ("places", "地名"), ("events", "事件名"), ("objects_animals", "物件/动物名")]:
+        mapping = entity_map.get(cat, {}) if isinstance(entity_map, dict) else {}
+        if mapping:
+            items = [f"{old}→{new}" for old, new in list(mapping.items())[:5]]
+            lines.append(f"- {cat_name}必须用新名：{', '.join(items)}")
+    lines.append("- 禁止出现以上任何原名，包括在对话、内心独白、叙述中")
+    lines.append("- 代称（他/她/它/那人）不受此限\n")
+    return "\n".join(lines) + "\n"
+
+
 def extract_plot_outline_from_reference(reference_chapter_text, chapter_number, strict_source_plot=True):
     """从参考章抽取结构骨架，供生成阶段使用，避免直接贴原文导致高相似。"""
     if not isinstance(reference_chapter_text, str) or not reference_chapter_text.strip():
@@ -722,6 +737,8 @@ def generate_chapter_content(
     strict_source_plot=False,
     prev_chapter_end="",
     next_chapter_start="",
+    entity_rewrite=False,
+    entity_map=None,
 ):
     """使用 AI 生成新的章节内容。
 
@@ -871,6 +888,7 @@ def generate_chapter_content(
         f"{chapter_plan_text if chapter_plan_text else '无（仍须严格按结构骨架的功能节点与场次写）'}\n\n"
         f"{implicit_two_phase_contract}"
         f"{production_hard_rules}"
+        f"{_entity_rewrite_block(entity_rewrite, entity_map)}"
         f"【核心创作要求】：\n"
         f"1. **风格**：同结构改编也要像真人落笔；幽默从处境里长出来，不要为搞笑而堆梗。\n"
         f"2. **连贯**：人物反应符合参考中的当下压力；设定与领域圣经一致且不与参考冲突。\n"

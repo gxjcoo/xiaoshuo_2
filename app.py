@@ -67,6 +67,11 @@ def main():
         action="store_true",
         help="只生成/复用风格分析、结构骨架和章节意图，不生成正文、不审计、不更新上下文。",
     )
+    parser.add_argument(
+        "--entity_rewrite",
+        action="store_true",
+        help="启用实体改写：自动扫描参考章角色/地名/事件/物件名并替换为新名，深度降重。",
+    )
 
     args = parser.parse_args()
     strict_source_plot = bool(STRICT_SOURCE_PLOT)
@@ -168,6 +173,7 @@ def main():
             force_reanalyze=args.force_reanalyze,
             analyze_only=args.analyze_only,
             chapter_anchors=chapter_anchors,
+            entity_rewrite=args.entity_rewrite,
         )
         chapter_end_time = time.time()
         chapter_duration = chapter_end_time - chapter_start_time

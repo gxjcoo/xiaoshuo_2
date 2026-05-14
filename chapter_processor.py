@@ -5,6 +5,14 @@ from typing import Tuple, Dict, Any
 # 新增模块导入
 from outline_extractor import extract_structured_outline_from_reference
 from structured_types import ChapterOutline
+from entity_rewriter import (
+    extract_entity_map_from_reference,
+    load_cached_entity_map,
+    save_entity_map,
+    apply_entity_rewrite,
+    detect_original_entity_leaks,
+    format_entity_leak_report,
+)
 
 # 从其他模块导入所需函数和常量
 from config import (
@@ -436,6 +444,7 @@ def process_chapter(
     force_reanalyze=False,
     analyze_only=False,
     chapter_anchors=None,
+    entity_rewrite=False,
 ):
     """同结构改编单章：对照 input/{n}.md 生成 output/{n}.md（保留结构功能，实体表达可改）。
 
@@ -635,6 +644,22 @@ def process_chapter(
         )
         return True
 
+    # --- 实体改写：扫描参考章 → 生成映射 → 替换骨架中的实体名 ---
+    entity_map = {}
+    if entity_rewrite:
+        entity_map = load_cached_entity_map(chapter_number)
+        if not entity_map or force_reanalyze:
+            entity_map = extract_entity_map_from_reference(original_content, chapter_number)
+            if entity_map:
+                save_entity_map(chapter_number, entity_map)
+                print(f"已生成实体改写映射: {len(entity_map.get('characters', {}))} 角色, "
+                      f"{len(entity_map.get('places', {}))} 地点, "
+                      f"{len(entity_map.get('events', {}))} 事件, "
+                      f"{len(entity_map.get('objects_animals', {}))} 物件")
+        if entity_map and reference_plot_outline:
+            reference_plot_outline = apply_entity_rewrite(reference_plot_outline, entity_map)
+            print("已将实体映射应用到结构骨架")
+
     new_chapter_content = generate_chapter_content(
         current_context,
         writing_style,
@@ -652,6 +677,8 @@ def process_chapter(
         strict_source_plot=strict_source_plot,
         prev_chapter_end=prev_chapter_end,
         next_chapter_start=next_chapter_start,
+        entity_rewrite=entity_rewrite,
+        entity_map=entity_map,
     )
     if not new_chapter_content:
         print(f"错误：未能生成章节 {chapter_number} 的内容，跳过此章节。")
@@ -673,8 +700,9 @@ def process_chapter(
         current_focus_text=current_focus_text,
         prev_chapter_end=prev_chapter_end,
         next_chapter_start=next_chapter_start,
+        entity_rewrite=entity_rewrite,
+        entity_map=entity_map,
     )
-    new_chapter_content = audit_gate_result.get("content", new_chapter_content)
     if not audit_gate_result.get("passed", False):
         score = audit_gate_result.get("last_audit", {}).get("total_score", 0)
         threshold = audit_rules.get("pass_threshold", 85)
