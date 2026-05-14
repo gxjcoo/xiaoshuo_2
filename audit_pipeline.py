@@ -222,7 +222,6 @@ def revise_for_plot_fidelity(
     plot_report,
     chapter_number,
     chapter_plan_text="",
-    domain_text="",
     model="deepseek-chat",
 ):
     """按结构骨架审计结果修正文稿，优先补齐缺失功能节点与纠正偏离。"""
@@ -237,7 +236,6 @@ def revise_for_plot_fidelity(
         f"【结构骨架】\n```json\n{reference_plot_outline}\n```\n\n"
         f"【剧情偏离报告】\n{report_json}\n\n"
         f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
-        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
         f"【当前正文】\n{chapter_content}"
     )
     messages = [
@@ -259,7 +257,6 @@ def rewrite_for_expression_distance(
     similarity_report,
     chapter_number,
     chapter_plan_text="",
-    domain_text="",
     model="deepseek-chat",
 ):
     """保留剧情事实，重写表达结构，专门处理与参考章过像的问题。"""
@@ -275,7 +272,6 @@ def rewrite_for_expression_distance(
         "5) 只输出修订后的完整章节，标题格式仍为 `# 第N章 副题`。\n\n"
         f"【相似度报告】\n{report_json}\n\n"
         f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
-        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
         f"【参考章片段（只用于避开重复表达，不得仿句）】\n{(reference_text or '')[:1200]}\n\n"
         f"【待降重正文】\n{chapter_content}"
     )
@@ -310,7 +306,6 @@ def anti_ai_rewrite_with_reference(
     chapter_number,
     writing_style,
     chapter_plan_text="",
-    domain_text="",
     ai_trace_findings=None,
     model="deepseek-chat",
 ):
@@ -346,7 +341,6 @@ def anti_ai_rewrite_with_reference(
         f"【风格差异对比(JSON)】\n{json.dumps(style_compare, ensure_ascii=False, indent=2)}\n\n"
         f"【既有风格分析（节选）】\n{style_snip if style_snip else '无'}\n\n"
         f"【本章意图规划】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
-        f"【领域圣经】\n{(domain_text or '')[:1800] if domain_text else '无'}\n\n"
         f"【待改写章节】\n{chapter_content}"
     )
     messages = [
@@ -380,7 +374,6 @@ def evaluate_chapter_with_rules(
     rules,
     recent_chapter_texts=None,
     chapter_plan_text="",
-    domain_text="",
     author_intent_text="",
     current_focus_text="",
     model="deepseek-chat",
@@ -396,7 +389,6 @@ def evaluate_chapter_with_rules(
         f'{{"total_score": number, "pass": bool, "dimension_scores": {{"id": number}}, "issues": [string], "suggestions": [string]}}\n'
         f"规则如下：\n{rules_json}\n\n"
         f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
-        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
         f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}\n\n"
         f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}\n\n"
         f"【正文】\n{chapter_content[:9000]}"
@@ -542,7 +534,6 @@ def revise_chapter_by_audit_feedback(
     writing_style,
     audit_result,
     chapter_plan_text="",
-    domain_text="",
     author_intent_text="",
     current_focus_text="",
     focus_dimensions=None,
@@ -562,7 +553,6 @@ def revise_chapter_by_audit_feedback(
         f"【审计结果】\n{feedback_json}\n\n"
         f"【风格分析】\n{writing_style}\n\n"
         f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
-        f"【领域圣经】\n{domain_text if domain_text else '无'}\n\n"
         f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}\n\n"
         f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}\n\n"
         f"【当前正文】\n{chapter_content}"
@@ -589,7 +579,6 @@ def audit_and_revise_until_pass(
     reference_text="",
     reference_plot_outline="",
     chapter_plan_text="",
-    domain_text="",
     author_intent_text="",
     current_focus_text="",
     generation_model=CHAPTER_GENERATION_MODEL,
@@ -645,7 +634,6 @@ def audit_and_revise_until_pass(
             rules,
             recent_chapter_texts=recent_chapter_texts,
             chapter_plan_text=chapter_plan_text,
-            domain_text=domain_text,
             author_intent_text=author_intent_text,
             current_focus_text=current_focus_text,
             model=analysis_model,
@@ -811,7 +799,6 @@ def audit_and_revise_until_pass(
                 plot_report,
                 chapter_number,
                 chapter_plan_text=chapter_plan_text,
-                domain_text=domain_text,
                 model=generation_model,
             )
             print("结构骨架贴合未达标，已执行一次结构纠偏修订。")
@@ -824,7 +811,6 @@ def audit_and_revise_until_pass(
                 similarity_report,
                 chapter_number,
                 chapter_plan_text=chapter_plan_text,
-                domain_text=domain_text,
                 model=generation_model,
             )
             similarity_rewrite_used = True
@@ -842,7 +828,6 @@ def audit_and_revise_until_pass(
                     chapter_number,
                     writing_style,
                     chapter_plan_text=chapter_plan_text,
-                    domain_text=domain_text,
                     ai_trace_findings=last_audit.get("ai_trace_rule_issues", []),
                     model=generation_model,
                 )
@@ -859,7 +844,6 @@ def audit_and_revise_until_pass(
                     chapter_number,
                     writing_style,
                     chapter_plan_text=chapter_plan_text,
-                    domain_text=domain_text,
                     ai_trace_findings=last_audit.get("ai_trace_rule_issues", []),
                     model=generation_model,
                 )
@@ -871,7 +855,6 @@ def audit_and_revise_until_pass(
             writing_style,
             last_audit,
             chapter_plan_text=chapter_plan_text,
-            domain_text=domain_text,
             author_intent_text=author_intent_text,
             current_focus_text=current_focus_text,
             focus_dimensions=_pick_focus_dimensions(last_audit.get("dimension_scores", {})),

@@ -49,18 +49,14 @@ PRUNED_ARCHIVE_FILE = 'pruned_context_archive.json'
 DEFAULT_INPUT_DIR = 'input_chapters'  # 默认参考章目录（用户自备 numbered .md）
 DEFAULT_OUTPUT_DIR = 'output_chapters'  # 默认生成输出目录
 
-# DDD：静态领域目录（相对项目工作目录）
-STORY_DOMAIN_DIR = 'story_domain'
 RUNTIME_DIR = 'runtime'
 AUTHOR_INTENT_FILE = 'author_intent.md'
 CURRENT_FOCUS_FILE = 'current_focus.md'
 AUDIT_RULES_FILE = 'audit_rules.json'
 # 注入提示词时的长度上限（字符），避免超出模型上下文
-MAX_DOMAIN_PROMPT_CHARS = 8000
 MAX_AUTHOR_INTENT_CHARS = 3000
 MAX_CURRENT_FOCUS_CHARS = 2000
 # 严格结构适配（STRICT_SOURCE_PLOT）时进一步压缩，减轻「说明书」式上下文抬高 AI 率
-MAX_DOMAIN_STRICT_CHARS = int(os.environ.get("MAX_DOMAIN_STRICT_CHARS", "3400"))
 MAX_AUTHOR_STRICT_CHARS = int(os.environ.get("MAX_AUTHOR_STRICT_CHARS", "900"))
 MAX_FOCUS_STRICT_CHARS = int(os.environ.get("MAX_FOCUS_STRICT_CHARS", "480"))
 
@@ -158,9 +154,6 @@ MAX_PRUNED_ARCHIVE_ABILITIES = 200
 MAX_PRUNED_ARCHIVE_ELEMENTS = 200
 MAX_PRUNED_ARCHIVE_RELATIONSHIPS = 200
 
-# --- 自动知识同步 ---
-# 章节完成后自动更新 story_domain（无需人工审核）
-AUTO_UPDATE_DOMAIN_KNOWLEDGE = True
 
 # --- LLM 调试日志 ---
 # 开启后会打印每次请求的接口路径与响应预览，便于定位“模型到底返回了什么”

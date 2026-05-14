@@ -22,14 +22,11 @@ from entity_rewriter import (
 # 从其他模块导入所需函数和常量
 from config import (
     RUNTIME_DIR,
-    STORY_DOMAIN_DIR,
-    AUTO_UPDATE_DOMAIN_KNOWLEDGE,
     AUDIT_RULES_FILE,
     AUDIT_MAX_REVISE_ROUNDS,
     MAX_RUNTIME_CHAPTER_ARTIFACTS,
     MAX_RUNTIME_INTENT_CHARS,
     MAX_RUNTIME_CONTEXT_SNAPSHOT_BYTES,
-    MAX_DOMAIN_STRICT_CHARS,
     MAX_AUTHOR_STRICT_CHARS,
     MAX_FOCUS_STRICT_CHARS,
 )
@@ -41,9 +38,7 @@ from ai_handler import (
     extract_plot_outline_from_reference,
 )
 from audit_pipeline import audit_and_revise_until_pass
-from knowledge_sync import extract_domain_updates
 from domain_spec_loader import (
-    load_story_domain_text,
     load_author_intent_text,
     load_current_focus_text,
 )
@@ -381,53 +376,6 @@ def build_audit_requirements_for_writing(audit_rules, top_k=6, strict_imitation=
     return "\n".join(lines)
 
 
-def _append_unique_lines(path, title, lines):
-    """将增量行追加到文件末尾，做简单去重。"""
-    if not lines:
-        return
-    existing = ""
-    if os.path.isfile(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                existing = f.read()
-        except Exception:
-            existing = ""
-    to_add = [ln for ln in lines if ln and ln not in existing]
-    if not to_add:
-        return
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(f"\n\n## {title}\n")
-            for ln in to_add:
-                f.write(f"- {ln}\n")
-    except Exception as e:
-        print(f"警告：写入领域增量失败 {path}: {e}")
-
-
-def auto_update_domain_knowledge(chapter_number, chapter_content, current_context):
-    """自动更新 story_domain 增量。"""
-    updates = extract_domain_updates(chapter_content, current_context)
-    _append_unique_lines(
-        os.path.join(STORY_DOMAIN_DIR, "01-glossary.md"),
-        f"自动增量（来源：第{chapter_number}章）",
-        updates.get("glossary", []),
-    )
-    _append_unique_lines(
-        os.path.join(STORY_DOMAIN_DIR, "02-world.md"),
-        f"自动增量（来源：第{chapter_number}章）",
-        updates.get("world", []),
-    )
-    _append_unique_lines(
-        os.path.join(STORY_DOMAIN_DIR, "03-characters.md"),
-        f"自动增量（来源：第{chapter_number}章）",
-        updates.get("characters", []),
-    )
-    _append_unique_lines(
-        os.path.join(STORY_DOMAIN_DIR, "04-voice.md"),
-        f"自动增量（来源：第{chapter_number}章）",
-        updates.get("voice", []),
-    )
 
 def _load_reference_chapter_from_input(input_dir, chapter_number):
     """读取 input 目录中指定章参考正文；占位或缺失时返回 None。"""
@@ -454,7 +402,7 @@ def process_chapter(
     """同结构改编单章：对照 input/{n}.md 生成 output/{n}.md（保留结构功能，实体表达可改）。
 
     strict_source_plot: True（默认）时衔接 input 原作上一章、规划/生成锁定结构骨架、
-    不把生成稿反写进 story_context / 不写 story_domain 自动增量。False 时为实验模式。
+    不把生成稿反写进 story_context。False 时为实验模式。
 
     chapter_anchors: 预加载的所有章节首尾锚点 {ch: {"start": "...", "end": "..."}}
         用于双向校验，确保本开头衔接上一章结尾、本结尾衔接下一章开头。
@@ -655,15 +603,11 @@ def process_chapter(
     )
 
     if strict_source_plot:
-        domain_text = load_story_domain_text(max_chars=MAX_DOMAIN_STRICT_CHARS)
         author_intent_text = load_author_intent_text(max_chars=MAX_AUTHOR_STRICT_CHARS)
         current_focus_text = load_current_focus_text(max_chars=MAX_FOCUS_STRICT_CHARS)
     else:
-        domain_text = load_story_domain_text()
         author_intent_text = load_author_intent_text()
         current_focus_text = load_current_focus_text()
-    if domain_text:
-        print("已加载领域圣经 (story_domain/*.md) 并注入生成提示。")
     if author_intent_text:
         print("已加载作者长期意图: author_intent.md")
     if current_focus_text:
@@ -715,7 +659,6 @@ def process_chapter(
         previous_chapter_content,
         next_chapter_preview,
         target_chapter_number=chapter_number,
-        domain_text=domain_text,
         chapter_plan_text=chapter_plan_text,
         author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
@@ -743,7 +686,6 @@ def process_chapter(
         reference_text=original_content,
         reference_plot_outline=reference_plot_outline,
         chapter_plan_text=chapter_plan_text,
-        domain_text=domain_text,
         author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
         prev_chapter_end=prev_chapter_end,
@@ -782,7 +724,6 @@ def process_chapter(
         {
             "chapter": chapter_number,
             "strict_source_plot": bool(strict_source_plot),
-            "has_domain_text": bool(domain_text),
             "has_author_intent": bool(author_intent_text),
             "has_current_focus": bool(current_focus_text),
             "audit_score": audit_gate_result.get("last_audit", {}).get("total_score", 0),
@@ -806,13 +747,6 @@ def process_chapter(
         new_chapter_content,
         strict_source_plot=strict_source_plot,
     )
-
-    # 9. 自动同步 story_domain 增量
-    if AUTO_UPDATE_DOMAIN_KNOWLEDGE and not strict_source_plot:
-        latest_context = get_current_context()
-        auto_update_domain_knowledge(chapter_number, new_chapter_content, latest_context)
-    elif AUTO_UPDATE_DOMAIN_KNOWLEDGE and strict_source_plot:
-        print("严格跟原作：跳过 story_domain 自动增量。")
 
     print(f"章节 {chapter_number} 处理完成。")
     return True # 表示处理成功

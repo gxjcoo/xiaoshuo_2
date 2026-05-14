@@ -766,7 +766,6 @@ def generate_chapter_content(
     previous_chapter_content=None,
     next_chapter_preview="",
     target_chapter_number=None,
-    domain_text="",
     chapter_plan_text="",
     author_intent_text="",
     current_focus_text="",
@@ -781,7 +780,6 @@ def generate_chapter_content(
 ):
     """使用 AI 生成新的章节内容。
 
-    domain_text: 领域圣经（DDD），静态设定与统一说法。
     reference_chapter_text: 输入目录参考章原文（仅用于标题兜底；生成阶段不直接注入正文片段）。
     reference_plot_outline: 从参考章提取的结构功能骨架，用于代替原文片段以降低相似度。
     strict_source_plot: 结构功能以参考章为准，衔接上一章优先原作（由调用方传入 previous 内容）。
@@ -838,7 +836,7 @@ def generate_chapter_content(
             "1) 主事件功能、场景功能、因果位置、人物登场/退场功能与冲突结果功能须与结构骨架一致；不是续写新书、不是扩写无关支线。\n"
             "2) 允许更换人物名、地点名、事件名、动物/物件名和局部承接方式；不得写入骨架中不存在的关键结构功能。\n"
             "3) 禁止沿用参考原文的连续句式、段落推进、开头落点、结尾收束方式和实体体系；同一功能事件必须换一种现场展开。\n"
-            "4) 若领域圣经、作者长期意图、近期焦点、JSON 上下文或本章意图与结构骨架冲突，一律以结构骨架为准。\n"
+            "4) 若作者长期意图、近期焦点、JSON 上下文或本章意图与结构骨架冲突，一律以结构骨架为准。\n"
             "5) 不得新增改变本章结构功能的支线或替换结局功能。\n\n"
         )
     else:
@@ -852,15 +850,6 @@ def generate_chapter_content(
     core_characters = current_context.get('core_characters', [])
     core_items = current_context.get('core_items', [])
     core_elements = f"核心角色：{', '.join(core_characters) if core_characters else '无'}, 核心道具：{', '.join(core_items) if core_items else '无'}"
-
-    ddd_block = ""
-    if domain_text:
-        ddd_block += (
-            f"【领域圣经 DDD（静态设定）】\n"
-            f"以下为世界观的术语与硬约束；**若与上方本章参考原文的情节、场次或因果冲突，以参考原文为准**；"
-            f"仅在不冲突时遵守本节，且不得与参考合读时自相矛盾。\n\n"
-            f"{domain_text}\n\n"
-        )
 
     # --- 核心创作要求 (共同部分) ---
     # 严格结构适配时结构骨架已是「节拍表」；再叠长条规则 + 两阶段契约，易诱发清单腔、工整句，抬高平台 AI 率。
@@ -917,7 +906,6 @@ def generate_chapter_content(
         + f"【语言风格备忘（非提纲；禁止模仿下列编号、小标题或分析腔落笔）】\n{style_brief}\n\n"
         f"{current_context_summary}\n\n"
         f"{core_elements}\n\n"
-        f"{ddd_block}"
         f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}"
         f"{'（严格模式下若与参考原文冲突则忽略）' if strict_source_plot else ''}\n\n"
         f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}"
@@ -930,7 +918,7 @@ def generate_chapter_content(
         f"{_entity_rewrite_block(entity_rewrite, entity_map)}"
         f"【核心创作要求】：\n"
         f"1. **风格**：同结构改编也要像真人落笔；幽默从处境里长出来，不要为搞笑而堆梗。\n"
-        f"2. **连贯**：人物反应符合参考中的当下压力；设定与领域圣经一致且不与参考冲突。\n"
+        f"2. **连贯**：人物反应符合参考中的当下压力；设定不与参考冲突。\n"
         f"3. **标题**：第 {chapter_number} 章单行标题，格式 `# 第{chapter_number}章 …` 置于最前。\n"
         f"4. **字数**：约 {target_length} 字；允许语意跳跃，不必写满「说明」才算完成。\n"
         f"5. **表达**：对话/叙述/内心交替出现，但内心勿承担世界观说明书职能。\n"
@@ -997,7 +985,6 @@ def generate_chapter_content(
     system_content = (
         "你是一位小说同结构改编作家：依据结构骨架输出同一功能链的新正文，语气有松有紧、句子有长有短，拒绝范文腔。"
         "不是自由续写、不是扩写新故事线、不是同人另起炉灶；提示中的分析/意图是备忘，禁止把提示结构映射成新章节大纲。"
-        "若含「领域圣经 DDD」，不与结构骨架冲突时遵守；冲突时以结构骨架为准。"
         "必须主动避开参考原文的实体体系、句式骨架、段落推进、开头和结尾表达。"
         "禁止用「心里咯噔一下/不禁/这一刻/显然」等万能情绪套话收束段落。"
     )

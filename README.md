@@ -1,7 +1,7 @@
 # 小说章节同结构改编工具（逻辑骨架）
 
 用于：长篇 `txt` 切章、对照参考章调用 LLM 做同结构改编、审计与修订闭环。  
-**本仓库分支不含任何具体小说正文**，剧情与设定由你本地放入 `input_chapters/`、`story_domain/` 等目录。
+**本仓库分支不含任何具体小说正文**，剧情与设定由你本地放入 `input_chapters/` 等目录。
 
 ## 项目概览
 
@@ -37,7 +37,7 @@ output_chapters/N.md
         +--> story_context.json
 ```
 
-默认启用严格结构适配模式：结构功能以 `input_chapters/` 中的参考章抽取出的结构骨架为准，上一章衔接优先使用 input 原作上一章，不把生成稿自动反写进 `story_domain/`。如需实验性自由改编，可使用 `--no_strict_structure_adaptation`（旧参数 `--no_strict_plot_fidelity`、`--no_strict_source_plot` 仍兼容）。
+默认启用严格结构适配模式：结构功能以 `input_chapters/` 中的参考章抽取出的结构骨架为准，上一章衔接优先使用 input 原作上一章。如需实验性自由改编，可使用 `--no_strict_structure_adaptation`（旧参数 `--no_strict_plot_fidelity`、`--no_strict_source_plot` 仍兼容）。
 
 ---
 
@@ -178,7 +178,6 @@ cp .env.example .env
 | `input_chapters/` | 参考章：`1.md`、`2.md` …（自备） |
 | `output_chapters/` | 生成输出（默认） |
 | `chapters_out/` | `split_novel.py` 默认切章输出 |
-| `story_domain/` | 领域圣经模板（可填） |
 | `author_intent.md` / `current_focus.md` | 意图模板（可填） |
 | `runtime/`、`story_context.json` | 运行态（生成时出现，已在 `.gitignore`） |
 
@@ -192,8 +191,7 @@ cp .env.example .env
 | `audit_pipeline.py` | 审计评分与修订闭环，结合规则审计和 AI 痕迹检测 |
 | `ai_trace_rules.py` | 确定性 AI 痕迹规则检测，如句式同构、说明腔、对话同腔化 |
 | `context_manager.py` | 维护 `story_context.json`，管理长期上下文、伏笔、核心角色和物品 |
-| `domain_spec_loader.py` | 加载 `story_domain/*.md`、`author_intent.md`、`current_focus.md` |
-| `knowledge_sync.py` | 实验模式下从生成章节提取可沉淀到领域文档的增量信息 |
+| `domain_spec_loader.py` | 加载 `author_intent.md`、`current_focus.md` |
 | `config.py` | 配置中心，读取 `.env` 并定义模型、路径、审计和上下文参数 |
 
 ---
@@ -209,7 +207,6 @@ cp .env.example .env
 
 ## 数据与运行产物
 
-- `story_domain/`：世界观、角色、术语、文风等长期设定资料，生成时会注入提示词。
 - `author_intent.md`：作者长期意图。
 - `current_focus.md`：近几章重点。
 - `story_context.json`：运行态故事上下文，记录最近剧情、伏笔、核心角色/道具等。

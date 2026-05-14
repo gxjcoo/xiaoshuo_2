@@ -55,7 +55,7 @@ def main():
     parser.add_argument(
         "--no_strict_structure_adaptation",
         action="store_true",
-        help="关闭严格结构适配：允许用 output 衔接、生成稿反写上下文与 story_domain 自动增量（实验/自由改编用）。",
+        help="关闭严格结构适配：允许用 output 衔接、生成稿反写上下文（实验/自由改编用）。",
     )
     parser.add_argument(
         "--force_reanalyze",
