@@ -231,7 +231,26 @@ python split_novel.py path/to/novel.txt -o chapters_out
 python app.py --input_dir input_chapters --output_dir output_chapters --start_chapter 1 --end_chapter 10
 ```
 
-常用：`--chapter N`、`--length 3000`、`--no_strict_structure_adaptation`（实验模式）、`--force_reanalyze`（忽略缓存重分析）、`--analyze_only`（只生成分析工件）。
+常用：`--chapter N`、`--length 3000`、`--no_strict_structure_adaptation`（实验模式）、`--force_reanalyze`（忽略缓存重分析）、`--analyze_only`（只生成分析工件）、`--no_entity_rewrite`（关闭实体改写）。
+
+### 实体改写（默认开启）
+
+`--entity_rewrite` 已升级为默认开启的「全局换名降重层」：
+
+- 自动扫描参考章里的**角色名、地名、事件名、物件/动物名**，调用 LLM 生成同风格新名。
+- 维护项目级词典 `runtime/global_entity_map.json`，**同一原名跨章永远映射到同一新名**，避免章节间「同人异名」。
+- 在所有 LLM 调用前先把参考原文、上一章衔接、下一章预览、风格备忘、骨架、意图都替换为新名；写盘前再做一次硬清洗。
+- 审计阶段检测残留时会先硬替换、再扣分，并把残留明细注入修订 prompt。
+
+关闭方式（仍想沿用原作实体名时）：
+
+```bash
+python app.py --no_entity_rewrite
+# 或在 .env 中设置
+ENTITY_REWRITE=0
+```
+
+如发现自动扫描漏掉某个角色，可手编 `runtime/global_entity_map.json` 的 `characters` 字段直接补条目，后续章节自动生效。
 
 只分析参考章、生成 runtime 工件但不写正文：
 

@@ -81,18 +81,57 @@ def _reference_prose_snippet(text, max_chars=2600):
 
 
 def _entity_rewrite_block(enabled: bool, entity_map) -> str:
-    """生成实体改写禁令块"""
-    if not enabled or not entity_map:
+    """生成实体改写禁令块。列出**全部**映射，避免 LLM 只看到部分而沿用其他原名。"""
+    if not enabled or not entity_map or not isinstance(entity_map, dict):
         return ""
-    lines = ["【实体改写禁令（硬约束，违反直接判不合格）】"]
-    for cat, cat_name in [("characters", "角色名"), ("places", "地名"), ("events", "事件名"), ("objects_animals", "物件/动物名")]:
+    label = {
+        "characters": "角色名",
+        "places": "地名",
+        "events": "事件名",
+        "objects_animals": "物件/动物名",
+    }
+    lines = ["【实体改写禁令（硬约束，违反直接判不合格；下表为本书全局统一新名）】"]
+    has_any = False
+    for cat in ("characters", "places", "events", "objects_animals"):
         mapping = entity_map.get(cat, {}) if isinstance(entity_map, dict) else {}
-        if mapping:
-            items = [f"{old}→{new}" for old, new in list(mapping.items())[:5]]
-            lines.append(f"- {cat_name}必须用新名：{', '.join(items)}")
-    lines.append("- 禁止出现以上任何原名，包括在对话、内心独白、叙述中")
-    lines.append("- 代称（他/她/它/那人）不受此限\n")
+        if not mapping:
+            continue
+        has_any = True
+        items = [f"{old}→{new}" for old, new in mapping.items()]
+        lines.append(f"- {label[cat]}（共 {len(items)} 条，必须用新名）：")
+        # 每行最多 8 个映射，便于阅读
+        chunk_size = 8
+        for i in range(0, len(items), chunk_size):
+            lines.append("    " + "、".join(items[i:i + chunk_size]))
+    if not has_any:
+        return ""
+    lines.append("- 上述任何【原名】不得出现在正文（含对话、内心独白、叙述、地名、招式、动物名等任何位置）。")
+    lines.append("- 与原名同字的常用词若非实体（如'宝'是普通字而非'宝寿'里的角色字）可保留；但凡作为人名/地名/物件名连用即视为违规。")
+    lines.append("- 代称（他/她/它/那人/那道士）不受此限。")
+    lines.append("- 出现任意一处原名都会触发硬替换并扣分，影响落盘。\n")
     return "\n".join(lines) + "\n"
+
+
+def _entity_rewrite_system_addon(enabled: bool, entity_map) -> str:
+    """system 消息追加的实体硬禁令摘要，提高 LLM 的注意权重。"""
+    if not enabled or not entity_map or not isinstance(entity_map, dict):
+        return ""
+    chars = entity_map.get("characters", {}) or {}
+    places = entity_map.get("places", {}) or {}
+    char_items = list(chars.items())[:6]
+    place_items = list(places.items())[:4]
+    parts = []
+    if char_items:
+        parts.append("角色改名：" + "、".join(f"{o}→{n}" for o, n in char_items))
+    if place_items:
+        parts.append("地名改名：" + "、".join(f"{o}→{n}" for o, n in place_items))
+    if not parts:
+        return ""
+    return (
+        " 本任务启用实体全局改写：参考资料里可能仍有原名，但正文必须用新名。"
+        + "；".join(parts)
+        + "（完整映射见用户消息中的实体改写禁令块）。任何原名出现都会被判为硬错误。"
+    )
 
 
 def extract_plot_outline_from_reference(reference_chapter_text, chapter_number, strict_source_plot=True):
@@ -955,22 +994,20 @@ def generate_chapter_content(
         )
 
     prompt = prompt_instruction + bidirectional_contract
+    system_content = (
+        "你是一位小说同结构改编作家：依据结构骨架输出同一功能链的新正文，语气有松有紧、句子有长有短，拒绝范文腔。"
+        "不是自由续写、不是扩写新故事线、不是同人另起炉灶；提示中的分析/意图是备忘，禁止把提示结构映射成新章节大纲。"
+        "若含「领域圣经 DDD」，不与结构骨架冲突时遵守；冲突时以结构骨架为准。"
+        "必须主动避开参考原文的实体体系、句式骨架、段落推进、开头和结尾表达。"
+        "禁止用「心里咯噔一下/不禁/这一刻/显然」等万能情绪套话收束段落。"
+    )
+    if strict_source_plot:
+        system_content += " 当前为严格结构适配：本章结构骨架即功能真值，可以换实体、表达和镜头承接，不可改结构功能。"
+    else:
+        system_content += " 当前为同结构改编实验模式：衔接可能非原作，但本章主干仍以结构骨架为准。"
+    system_content += _entity_rewrite_system_addon(entity_rewrite, entity_map)
     messages = [
-        {
-            "role": "system",
-            "content": (
-            "你是一位小说同结构改编作家：依据结构骨架输出同一功能链的新正文，语气有松有紧、句子有长有短，拒绝范文腔。"
-            "不是自由续写、不是扩写新故事线、不是同人另起炉灶；提示中的分析/意图是备忘，禁止把提示结构映射成新章节大纲。"
-            "若含「领域圣经 DDD」，不与结构骨架冲突时遵守；冲突时以结构骨架为准。"
-            "必须主动避开参考原文的实体体系、句式骨架、段落推进、开头和结尾表达。"
-            "禁止用「心里咯噔一下/不禁/这一刻/显然」等万能情绪套话收束段落。"
-            + (
-                    " 当前为严格结构适配：本章结构骨架即功能真值，可以换实体、表达和镜头承接，不可改结构功能。"
-                    if strict_source_plot
-                    else " 当前为同结构改编实验模式：衔接可能非原作，但本章主干仍以结构骨架为准。"
-                )
-            ),
-        },
+        {"role": "system", "content": system_content},
         {"role": "user", "content": prompt},
     ]
 

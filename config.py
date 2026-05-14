@@ -124,6 +124,10 @@ MAX_CHAPTER_CONTENT_LENGTH = 6000
 # 默认开启。实验/同人自由续写可设 STRICT_SOURCE_PLOT=0 或命令行 --no_strict_source_plot。
 STRICT_SOURCE_PLOT = os.environ.get("STRICT_SOURCE_PLOT", "1").strip() in {"1", "true", "True", "YES", "yes"}
 
+# 实体改写（角色/地名/事件/物件名全局换名）：默认开启，深度降重。
+# 关闭可设 ENTITY_REWRITE=0 或命令行 --no_entity_rewrite。
+ENTITY_REWRITE = os.environ.get("ENTITY_REWRITE", "1").strip() in {"1", "true", "True", "YES", "yes"}
+
 # --- 降低 AI 味道配置 ---
 ENABLE_ANTI_AI_REWRITE = True
 ANTI_AI_MAX_ROUNDS = 2

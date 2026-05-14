@@ -9,7 +9,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from config import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, STRICT_SOURCE_PLOT
+from config import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, STRICT_SOURCE_PLOT, ENTITY_REWRITE
 from context_manager import load_story_context # 直接使用返回的上下文
 from chapter_processor import process_chapter, preload_chapter_anchors
 
@@ -70,7 +70,12 @@ def main():
     parser.add_argument(
         "--entity_rewrite",
         action="store_true",
-        help="启用实体改写：自动扫描参考章角色/地名/事件/物件名并替换为新名，深度降重。",
+        help="显式开启实体改写（默认已开；与 ENTITY_REWRITE=1 同义）。",
+    )
+    parser.add_argument(
+        "--no_entity_rewrite",
+        action="store_true",
+        help="关闭实体改写：不再为参考章生成新名映射，正文沿用原作角色/地名。",
     )
 
     args = parser.parse_args()
@@ -87,6 +92,12 @@ def main():
         or getattr(args, "no_strict_structure_adaptation", False)
     ):
         strict_source_plot = False
+
+    entity_rewrite = bool(ENTITY_REWRITE)
+    if getattr(args, "entity_rewrite", False):
+        entity_rewrite = True
+    if getattr(args, "no_entity_rewrite", False):
+        entity_rewrite = False
 
     # 初始化：加载故事上下文
     initial_context = load_story_context()
@@ -149,6 +160,10 @@ def main():
         print("模式: 同结构改编（衔接 input 原作、结构功能以结构骨架为准、不据生成稿反写设定）。")
     else:
         print("模式: 实验（非严格结构适配）：output 衔接与上下文反写已打开，输出可能偏离 input 参考结构。")
+    if entity_rewrite:
+        print("实体改写: 已开启（参考章角色/地名/事件/物件名全局换名，跨章一致）。")
+    else:
+        print("实体改写: 已关闭（正文将沿用原作实体名）。")
     if args.analyze_only:
         print("分析模式: 只产出 runtime 分析工件，不生成正文。")
     if args.force_reanalyze:
@@ -173,7 +188,7 @@ def main():
             force_reanalyze=args.force_reanalyze,
             analyze_only=args.analyze_only,
             chapter_anchors=chapter_anchors,
-            entity_rewrite=args.entity_rewrite,
+            entity_rewrite=entity_rewrite,
         )
         chapter_end_time = time.time()
         chapter_duration = chapter_end_time - chapter_start_time

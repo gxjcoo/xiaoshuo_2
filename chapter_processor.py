@@ -9,6 +9,9 @@ from entity_rewriter import (
     extract_entity_map_from_reference,
     load_cached_entity_map,
     save_entity_map,
+    load_global_entity_map,
+    save_global_entity_map,
+    merge_entity_maps,
     apply_entity_rewrite,
     detect_original_entity_leaks,
     format_entity_leak_report,
@@ -444,7 +447,7 @@ def process_chapter(
     force_reanalyze=False,
     analyze_only=False,
     chapter_anchors=None,
-    entity_rewrite=False,
+    entity_rewrite=True,
 ):
     """同结构改编单章：对照 input/{n}.md 生成 output/{n}.md（保留结构功能，实体表达可改）。
 
@@ -496,6 +499,41 @@ def process_chapter(
         )
         return False
 
+    # --- 实体改写：在所有 LLM 调用之前完成 ---
+    # 提前到这里的目的：让风格分析、骨架抽取、意图规划、正文生成、审计统一基于
+    # 「已替换为新名的参考文本」，避免 LLM 看到原名后惯性沿用。
+    entity_map = {}
+    if entity_rewrite:
+        global_map = load_global_entity_map()
+        cached_map = None if force_reanalyze else load_cached_entity_map(chapter_number)
+        if cached_map and not force_reanalyze:
+            # 缓存仍可能漏抽实体；用全局映射补齐已知映射
+            entity_map = merge_entity_maps(cached_map, global_map)
+            # 把当前参考章里命中的新映射回写到全局表
+            global_map = merge_entity_maps(global_map, cached_map)
+        else:
+            entity_map = extract_entity_map_from_reference(
+                original_content,
+                chapter_number,
+                existing_map=global_map,
+            )
+            # 用全局表保证「同一原名跨章同译」
+            entity_map = merge_entity_maps(entity_map, global_map)
+            global_map = merge_entity_maps(global_map, entity_map)
+        if entity_map:
+            save_entity_map(chapter_number, entity_map)
+            save_global_entity_map(global_map)
+            counts = {cat: len(entity_map.get(cat, {})) for cat in ("characters", "places", "events", "objects_animals")}
+            print(
+                f"实体映射就绪: {counts['characters']} 角色, {counts['places']} 地点, "
+                f"{counts['events']} 事件, {counts['objects_animals']} 物件"
+            )
+
+        # 立即对所有「参考类」文本做硬替换，后续 LLM 调用就看不到原名了
+        original_content = apply_entity_rewrite(original_content, entity_map)
+        prev_chapter_end = apply_entity_rewrite(prev_chapter_end, entity_map)
+        next_chapter_start = apply_entity_rewrite(next_chapter_start, entity_map)
+
     reference_plot_outline = ""
     structured_outline = None  # 新增：结构化骨架
     if not force_reanalyze:
@@ -540,6 +578,10 @@ def process_chapter(
                 print(f"保存结构化骨架失败: {e}")
     if not reference_plot_outline:
         print("警告：结构骨架抽取失败，正文生成将使用极短参考结构兜底。")
+    else:
+        # 缓存里的骨架可能是改写前抽的；强制再过一次硬替换（新名不会被再次命中，无副作用）
+        if entity_rewrite and entity_map:
+            reference_plot_outline = apply_entity_rewrite(reference_plot_outline, entity_map)
     if not structured_outline:
         print("提示：结构化骨架抽取失败，将继续使用原有流程。")
 
@@ -568,6 +610,14 @@ def process_chapter(
             else:
                 print(f"警告：未找到上一章 output {prev_output_filepath}，无衔接片段。")
 
+    # 上一章/下一章节选也要在送进 LLM 前替换实体名（output 自身已是改写后无需重做，
+    # 但 input 原作衔接段必须替换）
+    if entity_rewrite and entity_map:
+        if previous_chapter_content:
+            previous_chapter_content = apply_entity_rewrite(previous_chapter_content, entity_map)
+        if next_chapter_preview:
+            next_chapter_preview = apply_entity_rewrite(next_chapter_preview, entity_map)
+
     # 2. 分析写作风格 (基于原始章节)
     writing_style = "" if force_reanalyze else _read_runtime_text(chapter_number, "style.md")
     if writing_style:
@@ -581,6 +631,8 @@ def process_chapter(
         writing_style = "幽默吐槽" # 提供一个回退
     else:
         print(f"分析得到的风格: {writing_style}")
+    if entity_rewrite and entity_map:
+        writing_style = apply_entity_rewrite(writing_style, entity_map)
 
     # 3. 获取当前上下文
     current_context = get_current_context()
@@ -636,6 +688,9 @@ def process_chapter(
         print("本章意图规划完成，将用于约束正文生成焦点。")
     else:
         print("警告：本章意图规划失败，将按原有路径直接生成正文。")
+    if entity_rewrite and entity_map and chapter_plan_text:
+        # 缓存意图可能是改写前生成的；强制再过一次
+        chapter_plan_text = apply_entity_rewrite(chapter_plan_text, entity_map)
 
     if analyze_only:
         print(
@@ -643,22 +698,6 @@ def process_chapter(
             "未生成正文、未执行审计、未更新故事上下文。"
         )
         return True
-
-    # --- 实体改写：扫描参考章 → 生成映射 → 替换骨架中的实体名 ---
-    entity_map = {}
-    if entity_rewrite:
-        entity_map = load_cached_entity_map(chapter_number)
-        if not entity_map or force_reanalyze:
-            entity_map = extract_entity_map_from_reference(original_content, chapter_number)
-            if entity_map:
-                save_entity_map(chapter_number, entity_map)
-                print(f"已生成实体改写映射: {len(entity_map.get('characters', {}))} 角色, "
-                      f"{len(entity_map.get('places', {}))} 地点, "
-                      f"{len(entity_map.get('events', {}))} 事件, "
-                      f"{len(entity_map.get('objects_animals', {}))} 物件")
-        if entity_map and reference_plot_outline:
-            reference_plot_outline = apply_entity_rewrite(reference_plot_outline, entity_map)
-            print("已将实体映射应用到结构骨架")
 
     new_chapter_content = generate_chapter_content(
         current_context,
@@ -708,6 +747,23 @@ def process_chapter(
         threshold = audit_rules.get("pass_threshold", 85)
         print(f"章节 {chapter_number} 审计未达标（{score} < {threshold}），本次不落盘。")
         return False
+
+    # 用审计返回后的内容覆盖（可能被修订过）
+    new_chapter_content = audit_gate_result.get("content", new_chapter_content) or new_chapter_content
+
+    # --- 写盘前最后一道硬清洗：强制把任何残留原名替换为新名 ---
+    if entity_rewrite and entity_map:
+        leaks_before = detect_original_entity_leaks(new_chapter_content, entity_map)
+        if leaks_before:
+            print(f"写盘前发现 {len(leaks_before)} 个原名残留，执行硬替换：")
+            print(format_entity_leak_report(leaks_before))
+            new_chapter_content = apply_entity_rewrite(new_chapter_content, entity_map)
+            leaks_after = detect_original_entity_leaks(new_chapter_content, entity_map)
+            if leaks_after:
+                print(f"警告：硬替换后仍残留 {len(leaks_after)} 项（可能为子串歧义）：")
+                print(format_entity_leak_report(leaks_after))
+            else:
+                print("硬替换完成，已无原名残留。")
 
     # 写出 runtime 工件（intent/context/trace）
     write_runtime_artifacts(

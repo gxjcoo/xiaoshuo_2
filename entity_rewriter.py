@@ -1,85 +1,178 @@
 """
 实体改写映射 - 同结构改编的核心降重层
-扫描参考章中的角色、地点、事件、物件名，生成映射表，后续所有流程使用新名
+
+设计要点：
+1. **项目级全局映射**：所有章节共享 runtime/global_entity_map.json，确保
+   同一原名永远映射到同一新名（跨章一致）。
+2. **章节级缓存**：runtime/chapter-XXXX.entity_map.json 仍保留本章扫描出的
+   实体，用于排查。
+3. **分段扫描**：长章按段落分块送进 LLM，避免后半实体被截断。
+4. **硬清洗**：apply_entity_rewrite 按原名长度降序替换，避免短名子串误吞长名；
+   detect_original_entity_leaks 输出残留明细，供审计/修订提示用。
 """
 
 import json
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from config import RUNTIME_DIR, CONTEXT_ANALYSIS_MODEL
 from ai_handler import call_deepseek_api
 
 ENTITY_CACHE_SUFFIX = "entity_map.json"
+GLOBAL_ENTITY_MAP_FILE = "global_entity_map.json"
+ENTITY_CATEGORIES = ("characters", "places", "events", "objects_animals")
 
+
+# ----------------- 路径与 IO -----------------
 
 def _entity_map_path(chapter_number: int) -> str:
     return os.path.join(RUNTIME_DIR, f"chapter-{chapter_number:04d}.{ENTITY_CACHE_SUFFIX}")
 
 
+def _global_entity_map_path() -> str:
+    return os.path.join(RUNTIME_DIR, GLOBAL_ENTITY_MAP_FILE)
+
+
+def _empty_map() -> Dict[str, Dict[str, str]]:
+    return {cat: {} for cat in ENTITY_CATEGORIES}
+
+
+def _ensure_categories(m: Dict) -> Dict[str, Dict[str, str]]:
+    if not isinstance(m, dict):
+        return _empty_map()
+    for cat in ENTITY_CATEGORIES:
+        if not isinstance(m.get(cat), dict):
+            m[cat] = {}
+    return m
+
+
 def load_cached_entity_map(chapter_number: int) -> Optional[Dict[str, Dict[str, str]]]:
-    """加载缓存的实体映射"""
     path = _entity_map_path(chapter_number)
     if not os.path.isfile(path):
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            return _ensure_categories(json.load(f))
     except Exception:
         return None
 
 
-def save_entity_map(chapter_number: int, entity_map: Dict[str, Dict[str, str]]):
-    """保存实体映射到 runtime"""
+def save_entity_map(chapter_number: int, entity_map: Dict[str, Dict[str, str]]) -> None:
     os.makedirs(RUNTIME_DIR, exist_ok=True)
     with open(_entity_map_path(chapter_number), "w", encoding="utf-8") as f:
-        json.dump(entity_map, f, ensure_ascii=False, indent=2)
+        json.dump(_ensure_categories(entity_map), f, ensure_ascii=False, indent=2)
 
 
-def extract_entity_map_from_reference(
-    reference_text: str,
-    chapter_number: int,
-    existing_map: Optional[Dict[str, Dict[str, str]]] = None,
+def load_global_entity_map() -> Dict[str, Dict[str, str]]:
+    """加载项目级全局实体映射。"""
+    path = _global_entity_map_path()
+    if not os.path.isfile(path):
+        return _empty_map()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return _ensure_categories(json.load(f))
+    except Exception:
+        return _empty_map()
+
+
+def save_global_entity_map(entity_map: Dict[str, Dict[str, str]]) -> None:
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    with open(_global_entity_map_path(), "w", encoding="utf-8") as f:
+        json.dump(_ensure_categories(entity_map), f, ensure_ascii=False, indent=2)
+
+
+def merge_entity_maps(
+    base: Dict[str, Dict[str, str]],
+    incoming: Dict[str, Dict[str, str]],
 ) -> Dict[str, Dict[str, str]]:
+    """以 base 为权威：base 中已有的原名保留原映射；incoming 中新增的才合入。
+    同时阻止 incoming 中新名与 base 中现有新名冲突（撞名时丢弃 incoming 的该条）。
     """
-    从参考章自动扫描实体名，调用 LLM 生成新名映射
-    返回: {"characters": {"原名": "新名"}, "places": {...}, "events": {...}, "objects_animals": {...}}
-    """
-    if not reference_text or not reference_text.strip():
-        return {"characters": {}, "places": {}, "events": {}, "objects_animals": {}}
+    base = _ensure_categories(json.loads(json.dumps(base or {})))
+    if not isinstance(incoming, dict):
+        return base
+    # 收集 base 中所有新名，避免重复
+    existing_new_names = set()
+    for cat in ENTITY_CATEGORIES:
+        existing_new_names.update(v for v in base.get(cat, {}).values() if isinstance(v, str))
+    for cat in ENTITY_CATEGORIES:
+        new_pairs = incoming.get(cat, {}) or {}
+        if not isinstance(new_pairs, dict):
+            continue
+        for old, new in new_pairs.items():
+            if not isinstance(old, str) or not isinstance(new, str):
+                continue
+            old = old.strip()
+            new = new.strip()
+            if not old or not new or old == new:
+                continue
+            if old in base[cat]:
+                continue
+            if new in existing_new_names:
+                continue
+            base[cat][old] = new
+            existing_new_names.add(new)
+    return base
 
-    existing_hint = ""
-    if existing_map:
-        existing_hint = (
-            "\n已有映射（新实体名不要和已有映射冲突）：\n" + json.dumps(existing_map, ensure_ascii=False)
-        )
 
+# ----------------- 实体扫描 -----------------
+
+def _split_into_chunks(text: str, max_chars: int = 4500) -> List[str]:
+    """按段落把长文切成不超过 max_chars 的若干块，避免一次喂太长。"""
+    if not text:
+        return []
+    paragraphs = [p for p in text.split("\n") if p.strip()]
+    chunks: List[str] = []
+    buf: List[str] = []
+    cur = 0
+    for p in paragraphs:
+        if cur + len(p) + 1 > max_chars and buf:
+            chunks.append("\n".join(buf))
+            buf = [p]
+            cur = len(p)
+        else:
+            buf.append(p)
+            cur += len(p) + 1
+    if buf:
+        chunks.append("\n".join(buf))
+    return chunks or [text[:max_chars]]
+
+
+def _scan_chunk_for_entities(
+    chunk: str,
+    chapter_number: int,
+    existing_map: Dict[str, Dict[str, str]],
+    chunk_idx: int,
+    chunk_total: int,
+) -> Dict[str, Dict[str, str]]:
+    existing_json = json.dumps(_ensure_categories(existing_map), ensure_ascii=False)
     prompt = (
-        f"请扫描第 {chapter_number} 章参考原文中的核心实体名，为每个实体生成一个风格一致但不同的新名字。\n\n"
-        "规则：\n"
-        "1. 同类实体保持命名风格一致（如都是先秦风格、都带官职感等）\n"
-        "2. 新名不得和原文任何一个实体名相同\n"
-        "3. 角色名用同长度、同姓氏风格替换；地名保持同类型后缀（城/镇/山/河）\n"
-        "4. 只提取文中出现的真实实体，不要编造文中不存在的实体\n"
-        "5. 主角名必须替换\n"
-        f"{existing_hint}\n"
-        "输出 JSON：\n"
+        f"请扫描第 {chapter_number} 章参考原文【片段 {chunk_idx}/{chunk_total}】中出现的全部实体名，"
+        "为每个**尚未在已有映射中**的实体生成一个风格一致但不同的新名字。\n\n"
+        "硬规则：\n"
+        "1) 必须穷尽扫描本片段：所有出场角色（含一笔带过的配角）、所有地名、所有有名号的事件、"
+        "所有有名号的物件/动物都要列出，不得遗漏。\n"
+        "2) 同类实体保持命名风格一致：角色名用同长度、同姓氏风格替换；地名保持同类型后缀（城/镇/山/河等）；"
+        "事件保持同类型后缀（之乱/之变/之约 等）。\n"
+        "3) 新名不得与原文任一实体名相同；不得与【已有映射】中任一新名相同。\n"
+        "4) 不要编造文中不存在的实体；只输出本片段中真实出现过的原名。\n"
+        "5) 主角名必须替换；姓氏与名字若可独立出现请分别列出（如 '赵无恤' 与 '赵' 都列）。\n"
+        "6) 称谓性别名（小道士、那年轻人、他）等代称不算实体，不要列出。\n\n"
+        f"【已有映射（请避免冲突，不要为已存在的原名再生成新名）】\n{existing_json}\n\n"
+        "输出 JSON（字段必须完整，没有就给空对象）：\n"
         "{\n"
         '  "characters": {"原名": "新名"},\n'
         '  "places": {"原名": "新名"},\n'
         '  "events": {"原名": "新名"},\n'
         '  "objects_animals": {"原名": "新名"}\n'
         "}\n\n"
-        f"参考原文：\n{reference_text[:5000]}"
+        f"【参考原文片段】\n{chunk}"
     )
-
     messages = [
-        {"role": "system", "content": "你是小说命名专家，为实体生成风格一致的新名字。只输出合法 JSON。"},
+        {"role": "system", "content": "你是小说命名专家，只输出合法 JSON。扫描必须穷尽，宁多勿漏。"},
         {"role": "user", "content": prompt},
     ]
-
-    print(f"正在为第 {chapter_number} 章生成实体改写映射...")
     raw = call_deepseek_api(
         messages,
         CONTEXT_ANALYSIS_MODEL,
@@ -87,47 +180,80 @@ def extract_entity_map_from_reference(
         temperature=0.3,
         response_format={"type": "json_object"},
     )
-
     if not raw:
-        print("警告: 实体映射生成失败，返回空映射")
-        return {"characters": {}, "places": {}, "events": {}, "objects_animals": {}}
-
+        return _empty_map()
     try:
-        entity_map = json.loads(raw)
-        if not isinstance(entity_map, dict):
-            raise ValueError("not dict")
-        # 确保四个分类都存在
-        for key in ["characters", "places", "events", "objects_animals"]:
-            entity_map.setdefault(key, {})
-        return entity_map
-    except Exception as e:
-        print(f"解析实体映射失败: {e}")
-        return {"characters": {}, "places": {}, "events": {}, "objects_animals": {}}
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            return _empty_map()
+        return _ensure_categories(parsed)
+    except Exception:
+        return _empty_map()
+
+
+def extract_entity_map_from_reference(
+    reference_text: str,
+    chapter_number: int,
+    existing_map: Optional[Dict[str, Dict[str, str]]] = None,
+) -> Dict[str, Dict[str, str]]:
+    """从参考章扫描实体名，结合 existing_map（通常是全局映射）增量产出本章映射。
+
+    返回的是【本章】扫描出的映射（含已有映射里命中的部分），不会原地修改 existing_map。
+    """
+    if not reference_text or not reference_text.strip():
+        return _empty_map()
+
+    base = _ensure_categories(json.loads(json.dumps(existing_map or {})))
+    chunks = _split_into_chunks(reference_text, max_chars=4500)
+    print(f"  实体扫描：第 {chapter_number} 章共 {len(chunks)} 个片段")
+
+    merged = _ensure_categories(json.loads(json.dumps(base)))
+    for idx, chunk in enumerate(chunks, start=1):
+        delta = _scan_chunk_for_entities(chunk, chapter_number, merged, idx, len(chunks))
+        merged = merge_entity_maps(merged, delta)
+
+    # 只返回参考原文中实际出现过的实体（即过滤掉 base 中无关的历史实体）
+    result = _empty_map()
+    for cat in ENTITY_CATEGORIES:
+        for old, new in merged.get(cat, {}).items():
+            if old and old in reference_text and old != new:
+                result[cat][old] = new
+    return result
+
+
+# ----------------- 文本改写 -----------------
+
+def _flatten_replacements(entity_map: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+    pairs: Dict[str, str] = {}
+    if not isinstance(entity_map, dict):
+        return pairs
+    for cat in ENTITY_CATEGORIES:
+        m = entity_map.get(cat, {}) or {}
+        if not isinstance(m, dict):
+            continue
+        for old, new in m.items():
+            if not isinstance(old, str) or not isinstance(new, str):
+                continue
+            old = old.strip()
+            new = new.strip()
+            if not old or not new or old == new:
+                continue
+            pairs[old] = new
+    return pairs
 
 
 def apply_entity_rewrite(text: str, entity_map: Dict[str, Dict[str, str]]) -> str:
-    """
-    对文本中的已知实体名进行全局替换
-    按实体名长度降序替换，避免短名先替换导致长名部分被替换
-    """
+    """对文本中已知实体名做全局硬替换。按原名长度降序，避免 '赵无' 先替换吃掉 '赵无恤'。"""
     if not text or not entity_map:
         return text
-
-    # 展平所有映射
-    all_replacements: Dict[str, str] = {}
-    for category in ["characters", "places", "events", "objects_animals"]:
-        all_replacements.update(entity_map.get(category, {}))
-
-    if not all_replacements:
+    pairs = _flatten_replacements(entity_map)
+    if not pairs:
         return text
-
-    # 按原名长度降序排序，避免 "赵无" 先替换导致 "赵无恤" 无法完整替换
-    sorted_keys = sorted(all_replacements.keys(), key=len, reverse=True)
     result = text
-    for old_name in sorted_keys:
-        new_name = all_replacements[old_name]
-        result = result.replace(old_name, new_name)
-
+    for old in sorted(pairs.keys(), key=len, reverse=True):
+        new = pairs[old]
+        if old and old in result:
+            result = result.replace(old, new)
     return result
 
 
@@ -135,29 +261,56 @@ def detect_original_entity_leaks(
     text: str,
     entity_map: Dict[str, Dict[str, str]],
 ) -> List[Dict]:
-    """
-    检测文本中残留的原实体名
-    返回: [{"entity": "赵无恤", "category": "characters", "count": 3}, ...]
-    """
-    leaks = []
-    for category in ["characters", "places", "events", "objects_animals"]:
-        for old_name, new_name in entity_map.get(category, {}).items():
-            count = text.count(old_name)
+    """检测文本中残留的原实体名。返回 [{entity, category, count, expected}, ...]"""
+    if not text or not entity_map:
+        return []
+    leaks: List[Dict] = []
+    for cat in ENTITY_CATEGORIES:
+        for old, new in (entity_map.get(cat, {}) or {}).items():
+            if not isinstance(old, str) or not isinstance(new, str):
+                continue
+            if not old or old == new:
+                continue
+            count = text.count(old)
             if count > 0:
                 leaks.append({
-                    "entity": old_name,
-                    "category": category,
+                    "entity": old,
+                    "category": cat,
                     "count": count,
-                    "expected": new_name,
+                    "expected": new,
                 })
     return leaks
 
 
 def format_entity_leak_report(leaks: List[Dict]) -> str:
-    """格式化实体残留报告"""
     if not leaks:
         return "无原实体残留"
     lines = [f"检测到 {len(leaks)} 个原实体残留："]
     for leak in leaks:
-        lines.append(f"  - {leak['entity']}（{leak['category']}）残留 {leak['count']} 次，应为 {leak['expected']}")
+        lines.append(
+            f"  - {leak['entity']}（{leak['category']}）残留 {leak['count']} 次，应改为 {leak['expected']}"
+        )
     return "\n".join(lines)
+
+
+def format_entity_map_for_prompt(entity_map: Dict[str, Dict[str, str]], max_per_category: int = 0) -> str:
+    """把实体映射格式化成提示词块。max_per_category=0 表示不截断（默认列全部）。"""
+    if not entity_map:
+        return ""
+    label = {
+        "characters": "角色名",
+        "places": "地名",
+        "events": "事件名",
+        "objects_animals": "物件/动物名",
+    }
+    sections: List[str] = []
+    for cat in ENTITY_CATEGORIES:
+        pairs = entity_map.get(cat, {}) or {}
+        if not pairs:
+            continue
+        items = list(pairs.items())
+        if max_per_category and max_per_category > 0:
+            items = items[:max_per_category]
+        rendered = "、".join(f"{old}→{new}" for old, new in items)
+        sections.append(f"- {label.get(cat, cat)}：{rendered}")
+    return "\n".join(sections)
