@@ -38,6 +38,7 @@ def analyze_hooks_and_volume_update(current_context, chapter_content, chapter_nu
         max_tokens=1200,
         temperature=0.1,
         response_format={"type": "json_object"},
+        task_label=f"第{chapter_number}章线索与分卷更新",
     )
     if not result_text:
         return {"new_hooks": [], "resolved_hooks": [], "volume_summary": ""}

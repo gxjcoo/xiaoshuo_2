@@ -89,6 +89,7 @@ def generate_title_from_chapter_content(chapter_number, chapter_content, referen
         CHAPTER_GENERATION_MODEL,
         max_tokens=80,
         temperature=0.4,
+        task_label=f"第{chapter_number}章标题生成",
     )
     subtitle = _normalize_title_subtitle(raw or "", max_len=18)
     if not subtitle:

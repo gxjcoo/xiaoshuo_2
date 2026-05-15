@@ -55,7 +55,13 @@ def plan_chapter_with_ai(
         {"role": "system", "content": system_msg},
         {"role": "user", "content": prompt},
     ]
-    plan_text = call_deepseek_api(messages, CHAPTER_GENERATION_MODEL, max_tokens=800, temperature=0.3)
+    plan_text = call_deepseek_api(
+        messages,
+        CHAPTER_GENERATION_MODEL,
+        max_tokens=800,
+        temperature=0.3,
+        task_label=f"第{target_chapter_number}章意图规划",
+    )
     if not plan_text:
         return ""
     return plan_text.strip()

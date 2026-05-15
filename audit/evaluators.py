@@ -50,6 +50,7 @@ def evaluate_plot_fidelity_with_outline(
         max_tokens=1100,
         temperature=0.05,
         response_format={"type": "json_object"},
+        task_label=f"第{chapter_number}章结构贴合审计",
     )
     if not raw:
         return {"score": 0, "pass": False, "issues": ["结构骨架审计失败"], "suggestions": []}
@@ -120,6 +121,7 @@ def evaluate_next_anchor_continuity(
         max_tokens=900,
         temperature=0.05,
         response_format={"type": "json_object"},
+        task_label=f"第{chapter_number}章跨章衔接审计",
     )
     if not raw:
         return {
@@ -239,6 +241,7 @@ def evaluate_chapter_with_rules(
         max_tokens=1200,
         temperature=0.1,
         response_format={"type": "json_object"},
+        task_label=f"第{chapter_number}章规则审计",
     )
     if not raw:
         return {"total_score": 0, "pass": False, "issues": ["审计失败"], "suggestions": []}

@@ -59,6 +59,7 @@ def analyze_context_with_ai(current_context, chapter_content):
             max_tokens=CONTEXT_ANALYSIS_MAX_TOKENS,
             temperature=CONTEXT_ANALYSIS_TEMPERATURE,
             response_format={"type": "json_object"},
+            task_label="章节上下文更新",
         )
 
         if not updated_data_text:

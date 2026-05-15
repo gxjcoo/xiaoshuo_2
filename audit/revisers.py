@@ -38,7 +38,13 @@ def revise_for_plot_fidelity(
         {"role": "system", "content": "你是小说结构修订编辑，优先修正结构偏离，同时保持表达和实体体系与参考文拉开距离。"},
         {"role": "user", "content": prompt},
     ]
-    revised = call_deepseek_api(messages, model, max_tokens=len(chapter_content) + 1600, temperature=0.42)
+    revised = call_deepseek_api(
+        messages,
+        model,
+        max_tokens=len(chapter_content) + 1600,
+        temperature=0.42,
+        task_label=f"第{chapter_number}章结构纠偏修订",
+    )
     if not revised:
         return chapter_content
     revised = revised.strip()
@@ -86,6 +92,7 @@ def rewrite_for_expression_distance(
         model,
         max_tokens=len(chapter_content) + 1600,
         temperature=0.58,
+        task_label=f"第{chapter_number}章表达降重重写",
     )
     if not rewritten:
         return chapter_content
@@ -155,6 +162,7 @@ def anti_ai_rewrite_with_reference(
         model,
         max_tokens=len(chapter_content) + 1200,
         temperature=0.62,
+        task_label=f"第{chapter_number}章去AI味修订",
     )
     if not rewritten:
         return chapter_content
@@ -195,7 +203,13 @@ def revise_chapter_by_audit_feedback(
         {"role": "system", "content": "你是小说改稿编辑，按反馈精修但不改剧情主干。"},
         {"role": "user", "content": prompt},
     ]
-    revised = call_deepseek_api(messages, model, max_tokens=len(chapter_content) + 1400, temperature=0.35)
+    revised = call_deepseek_api(
+        messages,
+        model,
+        max_tokens=len(chapter_content) + 1400,
+        temperature=0.35,
+        task_label=f"第{chapter_number}章审计反馈修订",
+    )
     if not revised:
         return chapter_content
     revised = revised.strip()

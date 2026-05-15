@@ -26,9 +26,11 @@ def _preview_text(text, limit=600):
     return cleaned[:limit] + "...(truncated)"
 
 
-def _debug_log_request(model, messages, temperature, max_tokens, response_format=None):
+def _debug_log_request(model, messages, temperature, max_tokens, response_format=None, task_label=""):
     if not DEBUG_LLM_LOG:
         return
+    if task_label:
+        print(f"[LLM DEBUG] task={task_label}", flush=True)
     print(
         f"[LLM DEBUG] sending model={model} temperature={temperature} max_tokens={max_tokens} response_format={response_format}",
         flush=True,
@@ -199,7 +201,7 @@ def _effective_response_format(response_format):
     return response_format
 
 
-def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, response_format=None):
+def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, response_format=None, task_label=""):
     """调用 LLM 的通用函数（DeepSeek / 豆包 Ark）。"""
     response_format = _effective_response_format(response_format)
     timeout = httpx.Timeout(
@@ -215,14 +217,15 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
 
     for attempt in range(retries):
         try:
+            task = f"任务={task_label}，" if task_label else ""
             print(
-                f"API 请求 (尝试 {attempt + 1}/{retries}): 模型={model}, 温度={temperature}, "
+                f"API 请求 ({task}尝试 {attempt + 1}/{retries}): 模型={model}, 温度={temperature}, "
                 f"读超时={API_HTTP_READ_TIMEOUT}s",
                 flush=True,
             )
-            _debug_log_request(model, messages, temperature, max_tokens, response_format=response_format)
+            _debug_log_request(model, messages, temperature, max_tokens, response_format=response_format, task_label=task_label)
             print(
-                "  → 等待服务端响应中（网络慢或模型排队时可能需一至数分钟，并非死机）…",
+                f"  → 正在等待服务端返回：{task_label or '未标注任务'}。网络慢或模型排队时可能需一至数分钟，并非死机。",
                 flush=True,
             )
 

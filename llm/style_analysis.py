@@ -64,6 +64,7 @@ def analyze_writing_style(text_sample):
             STYLE_ANALYSIS_MODEL,
             max_tokens=STYLE_ANALYSIS_MAX_TOKENS,
             temperature=STYLE_ANALYSIS_TEMPERATURE,
+            task_label="参考章文风分析",
         )
 
         if not style_analysis:

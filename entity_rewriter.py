@@ -248,6 +248,7 @@ def _scan_chunk_for_entities(
         max_tokens=2000,
         temperature=0.3,
         response_format={"type": "json_object"},
+        task_label=f"第{chapter_number}章实体扫描 {chunk_idx}/{chunk_total}",
     )
     if not raw:
         return _empty_map()

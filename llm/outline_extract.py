@@ -46,6 +46,7 @@ def extract_plot_outline_from_reference(reference_chapter_text, chapter_number, 
         max_tokens=1600,
         temperature=0.1,
         response_format={"type": "json_object"},
+        task_label=f"第{chapter_number}章结构骨架抽取",
     )
     if not raw:
         return ""

@@ -245,12 +245,12 @@ def generate_chapter_content(
     ]
 
     try:
-        print(f"API 请求 (尝试 1/3): 模型={CHAPTER_GENERATION_MODEL}, 温度={CHAPTER_GENERATION_TEMPERATURE}")
         new_content = call_deepseek_api(
             messages,
             CHAPTER_GENERATION_MODEL,
             max_tokens=_chapter_completion_max_tokens(target_length),
             temperature=CHAPTER_GENERATION_TEMPERATURE,
+            task_label=f"第{chapter_number}章正文生成",
         )
         if not new_content:
             return None

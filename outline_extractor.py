@@ -79,6 +79,7 @@ def extract_structured_outline_from_reference(
         max_tokens=2000,
         temperature=0.1,
         response_format={"type": "json_object"},
+        task_label=f"第{chapter_number}章结构化骨架抽取",
     )
 
     if not raw:

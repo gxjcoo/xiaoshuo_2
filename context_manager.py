@@ -592,7 +592,8 @@ def detect_potential_core_characters(chapter_content):
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=200
+            max_tokens=200,
+            task_label="核心配角检测",
         )
         
         if not response:
@@ -692,7 +693,8 @@ def detect_potential_core_items(chapter_content):
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=200
+            max_tokens=200,
+            task_label="核心道具检测",
         )
         
         if not response:
