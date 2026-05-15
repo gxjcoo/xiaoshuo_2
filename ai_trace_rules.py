@@ -32,6 +32,20 @@ TRANSITION_WORDS = [
     "接着",
 ]
 
+STAGE_DIRECTION_MARKERS = [
+    "唰", "蹭", "咻", "嗷", "猛地", "忽然", "突然", "稳稳", "直挺挺", "半分钟", "两秒", "三寸",
+]
+
+BRISK_SHORT_SENTENCE_MARKERS = [
+    "日头", "风", "云", "灯笼", "铜铃", "火光", "天", "脚步", "哭声", "冷", "热", "黑",
+]
+
+AUTHOR_LABEL_PATTERNS = [
+    r"这是(?:他|她|它|[^，。！？!?]{1,8})[^，。！？!?]{0,18}(?:固定习惯|专属小动作|专属储物格|标准(?:的)?[^，。！？!?]{0,8}性子)",
+    r"(?:说话|每句末尾|口头禅)[^，。！？!?]{0,24}(?:带着|总爱|固定|专门)",
+    r"(?:标准的|典型的)[^，。！？!?]{1,12}(?:性子|脾气|作风)",
+]
+
 COGNITIVE_MARKERS = [
     "觉得", "认为", "意识到", "明白", "知道", "分析", "判断", "盘算", "思考", "推测", "估计",
     "回忆", "琢磨", "理解", "推断", "复盘", "意味着", "所以", "因此",
@@ -51,6 +65,10 @@ def _split_sentences(text):
 def _split_paragraphs(text):
     parts = re.split(r"\n\s*\n", text or "")
     return [p.strip() for p in parts if p and p.strip()]
+
+
+def _split_nonempty_lines(text):
+    return [line.strip() for line in (text or "").splitlines() if line and line.strip()]
 
 
 def _normalize_chinese(text):
@@ -137,6 +155,101 @@ def _dialogue_voice_similarity(text):
     top, top_n = cnt.most_common(1)[0]
     ratio = top_n / len(endings)
     return ratio, [top]
+
+
+def _author_label_exposition_issue(text):
+    """检测把角色特征直接贴成说明标签的句子。"""
+    text = text or ""
+    hits = []
+    for pattern in AUTHOR_LABEL_PATTERNS:
+        hits.extend(re.findall(pattern, text))
+    if len(hits) >= 2:
+        preview = "、".join(str(x)[:28] for x in hits[:4])
+        return {
+            "rule": "角色标签说明过密",
+            "severity": "warning",
+            "description": f"检测到 {len(hits)} 处直接说明角色习惯/口癖/性子的标签句，示例：{preview}。",
+            "suggestion": "删除“这是他的固定习惯/专属小动作/标准性子”等解释，让习惯从动作重复、别人反应或对话岔话里露出来。",
+            "span_hint": "角色描写与旁白解释",
+        }, 10
+    return None
+
+
+def _catchphrase_overuse_issue(text):
+    """检测单个口癖在短对白中过度刷屏。"""
+    text = text or ""
+    dialogues = re.findall(r"[“\"]([^”\"]{2,180})[”\"]", text)
+    if not dialogues:
+        return None
+    particles = ["嗷", "啊", "呀", "呢", "嘛", "吧", "呗", "哎"]
+    worst = ("", 0, "")
+    for line in dialogues:
+        for particle in particles:
+            count = line.count(particle)
+            if count > worst[1]:
+                worst = (particle, count, line)
+    particle, count, line = worst
+    if count >= 5:
+        return {
+            "rule": "口癖刷屏",
+            "severity": "warning",
+            "description": f"单段对白里“{particle}”重复 {count} 次，像刻意制造声纹。",
+            "suggestion": "保留一两处口癖即可，其余改成停顿、抢话、吞字、具体小动作或地方词。",
+            "span_hint": line[:80],
+        }, 8
+    return None
+
+
+def _stage_direction_overuse_issue(text):
+    """检测镜头指令词/拟声动作词过密，朱雀类检测器容易把这种整齐调度判成生成痕迹。"""
+    text = text or ""
+    if len(text) < 500:
+        return None
+    counts = {m: text.count(m) for m in STAGE_DIRECTION_MARKERS}
+    total = sum(counts.values())
+    density = total / max(1, len(text) / 1000)
+    repeated = {k: v for k, v in counts.items() if v >= 2}
+    if density >= 5.0 or len(repeated) >= 3:
+        detail = "、".join(f"{k}x{v}" for k, v in sorted(counts.items(), key=lambda x: -x[1]) if v > 0)[:80]
+        return {
+            "rule": "镜头指令词过密",
+            "severity": "warning",
+            "description": f"拟声/动作调度词密度偏高（{density:.2f}/千字），示例：{detail}。",
+            "suggestion": "删减“唰/蹭/猛地/突然”等舞台指令，改成更具体的身体反应、物件变化或人物岔话。",
+            "span_hint": "动作与转场句",
+        }, 8
+    return None
+
+
+def _brisk_short_sentence_ladder_issue(paragraphs, lines=None):
+    """检测连续短段像分镜清单一样推进。"""
+    units = list(paragraphs or [])
+    if lines:
+        units.extend(lines)
+    if len(units) < 5:
+        return None
+    streak = 0
+    max_streak = 0
+    for p in units:
+        clean = re.sub(r"\s+", "", p)
+        has_dialogue = bool(re.search(r"[“\"].+?[”\"]", p))
+        has_marker = any(m in p for m in BRISK_SHORT_SENTENCE_MARKERS)
+        sentence_count = max(1, len(_split_sentences(p)))
+        is_ladder = len(clean) <= 34 and sentence_count <= 2 and has_marker and not has_dialogue
+        if is_ladder:
+            streak += 1
+            max_streak = max(max_streak, streak)
+        else:
+            streak = 0
+    if max_streak >= 4:
+        return {
+            "rule": "短句阶梯铺陈",
+            "severity": "warning",
+            "description": f"检测到连续 {max_streak} 个短段以天气/物件/声响推进，像分镜清单，人工波动不足。",
+            "suggestion": "把部分短段并入人物动作或对话里，中间插入半句抱怨、误判、细碎动作，打断整齐镜头序列。",
+            "span_hint": "开头或氛围铺陈段",
+        }, 10
+    return None
 
 
 def _event_density_issue(text, window_chars=650):
@@ -261,6 +374,7 @@ def analyze_ai_trace(text, recent_chapter_texts=None):
 
     sentences = _split_sentences(text)
     paragraphs = _split_paragraphs(text)
+    lines = _split_nonempty_lines(text)
 
     # 1) 句长同质化
     if len(sentences) >= 6:
@@ -363,6 +477,31 @@ def analyze_ai_trace(text, recent_chapter_texts=None):
     voiceprint_res = _voiceprint_gap_issue(text)
     if voiceprint_res:
         item, penalty = voiceprint_res
+        score_penalty += penalty
+        issues.append(item)
+
+    # 6.8) 朱雀报告暴露的高频形态：舞台指令词、短句分镜清单、显式角色标签和口癖刷屏
+    label_res = _author_label_exposition_issue(text)
+    if label_res:
+        item, penalty = label_res
+        score_penalty += penalty
+        issues.append(item)
+
+    catchphrase_res = _catchphrase_overuse_issue(text)
+    if catchphrase_res:
+        item, penalty = catchphrase_res
+        score_penalty += penalty
+        issues.append(item)
+
+    stage_res = _stage_direction_overuse_issue(text)
+    if stage_res:
+        item, penalty = stage_res
+        score_penalty += penalty
+        issues.append(item)
+
+    ladder_res = _brisk_short_sentence_ladder_issue(paragraphs, lines=lines)
+    if ladder_res:
+        item, penalty = ladder_res
         score_penalty += penalty
         issues.append(item)
 

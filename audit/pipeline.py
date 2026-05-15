@@ -7,12 +7,17 @@
 - 多种针对性修订策略选择（结构偏离 / 表达过像 / AI 味 / 通用反馈）
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 from audit_enhanced import AuditHistory
 from ai_trace_rules import _dice_similarity, _normalize_chinese
 
 from config import (
     ENABLE_ANTI_AI_REWRITE,
+    ANTI_AI_REWRITE_ONLY_WHEN_BELOW_THRESHOLD,
     ANTI_AI_MAX_ROUNDS,
+    AUDIT_PARALLEL_EVALUATORS,
+    AUDIT_SKIP_LLM_CONTINUITY_ON_GUARD_FAIL,
     AUDIT_NEAR_PASS_DELTA,
     CHAPTER_GENERATION_MODEL,
     CONTEXT_ANALYSIS_MODEL,
@@ -60,6 +65,59 @@ def _append_audit_issue(last_audit, issue, suggestion):
     suggestions.append(suggestion)
     last_audit["issues"] = issues
     last_audit["suggestions"] = suggestions
+
+
+def _evaluate_rule_and_plot(
+    current,
+    chapter_number,
+    rules,
+    recent_chapter_texts,
+    chapter_plan_text,
+    current_focus_text,
+    analysis_model,
+    reference_plot_outline,
+    plot_min_score,
+):
+    """并行执行两个互不依赖的 LLM 审计，减少单轮网络等待。"""
+    if not AUDIT_PARALLEL_EVALUATORS or not reference_plot_outline:
+        last_audit = evaluate_chapter_with_rules(
+            current,
+            chapter_number,
+            rules,
+            recent_chapter_texts=recent_chapter_texts,
+            chapter_plan_text=chapter_plan_text,
+            current_focus_text=current_focus_text,
+            model=analysis_model,
+        )
+        plot_report = evaluate_plot_fidelity_with_outline(
+            reference_plot_outline,
+            current,
+            chapter_number,
+            model=analysis_model,
+            min_score=plot_min_score,
+        )
+        return last_audit, plot_report
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        rule_future = pool.submit(
+            evaluate_chapter_with_rules,
+            current,
+            chapter_number,
+            rules,
+            recent_chapter_texts=recent_chapter_texts,
+            chapter_plan_text=chapter_plan_text,
+            current_focus_text=current_focus_text,
+            model=analysis_model,
+        )
+        plot_future = pool.submit(
+            evaluate_plot_fidelity_with_outline,
+            reference_plot_outline,
+            current,
+            chapter_number,
+            model=analysis_model,
+            min_score=plot_min_score,
+        )
+        return rule_future.result(), plot_future.result()
 
 
 def _next_anchor_conflict_issues(gen_end, next_chapter_start):
@@ -138,6 +196,7 @@ def audit_and_revise_until_pass(
         "content": chapter_content,
         "audit": last_audit,
     }
+    anti_ai_rewrite_used = False
 
     for round_idx in range(max_rounds + 1):
         plateau_detected = False
@@ -145,14 +204,16 @@ def audit_and_revise_until_pass(
         if entity_rewrite and entity_map:
             from entity_rewriter import apply_entity_rewrite as _apply_rewrite
             current = _apply_rewrite(current, entity_map)
-        last_audit = evaluate_chapter_with_rules(
+        last_audit, plot_report = _evaluate_rule_and_plot(
             current,
             chapter_number,
             rules,
-            recent_chapter_texts=recent_chapter_texts,
-            chapter_plan_text=chapter_plan_text,
-            current_focus_text=current_focus_text,
-            model=analysis_model,
+            recent_chapter_texts,
+            chapter_plan_text,
+            current_focus_text,
+            analysis_model,
+            reference_plot_outline,
+            plot_min_score,
         )
         score = int(last_audit.get("total_score", 0))
         try:
@@ -163,13 +224,6 @@ def audit_and_revise_until_pass(
             analyze_reference_similarity(reference_text, current, rules=rules)
             if reference_text
             else {"too_similar": False, "ngram_overlap": 0.0, "sentence_reuse": 0.0}
-        )
-        plot_report = evaluate_plot_fidelity_with_outline(
-            reference_plot_outline,
-            current,
-            chapter_number,
-            model=analysis_model,
-            min_score=plot_min_score,
         )
         similarity_ok = not bool(similarity_report.get("too_similar", False))
         plot_ok = bool(plot_report.get("pass", True))
@@ -282,23 +336,33 @@ def audit_and_revise_until_pass(
                     for issue, suggestion in continuity_issues:
                         print(f"  双向衔接: {issue}")
                         _append_audit_issue(last_audit, issue, suggestion)
-                continuity_report = evaluate_next_anchor_continuity(
-                    gen_end,
-                    next_chapter_start,
-                    chapter_number,
-                    model=analysis_model,
-                )
-                last_audit["next_anchor_continuity"] = continuity_report
-                if not continuity_report.get("pass", True):
-                    hook_matched = False
-                    report_score = continuity_report.get("score", 0)
-                    print(f"  双向衔接结构化审计未通过: score={report_score}")
-                    for issue in continuity_report.get("issues", []) or []:
-                        _append_audit_issue(
-                            last_audit,
-                            f"[continuity] {issue}",
-                            "按下一章开头重写本章结尾，确保对象、事件、主角位置和误会指向一致。",
-                        )
+                if continuity_issues and AUDIT_SKIP_LLM_CONTINUITY_ON_GUARD_FAIL:
+                    last_audit["next_anchor_continuity"] = {
+                        "score": 0,
+                        "pass": False,
+                        "issues": [issue for issue, _ in continuity_issues],
+                        "suggestions": [suggestion for _, suggestion in continuity_issues],
+                        "skipped_llm": True,
+                    }
+                    print("  双向衔接: 确定性守卫已命中，跳过 LLM 衔接复审以节省时间。")
+                else:
+                    continuity_report = evaluate_next_anchor_continuity(
+                        gen_end,
+                        next_chapter_start,
+                        chapter_number,
+                        model=analysis_model,
+                    )
+                    last_audit["next_anchor_continuity"] = continuity_report
+                    if not continuity_report.get("pass", True):
+                        hook_matched = False
+                        report_score = continuity_report.get("score", 0)
+                        print(f"  双向衔接结构化审计未通过: score={report_score}")
+                        for issue in continuity_report.get("issues", []) or []:
+                            _append_audit_issue(
+                                last_audit,
+                                f"[continuity] {issue}",
+                                "按下一章开头重写本章结尾，确保对象、事件、主角位置和误会指向一致。",
+                            )
 
         if passed and not hook_matched:
             print("  双向衔接未通过，本轮不计为通过")
@@ -361,7 +425,21 @@ def audit_and_revise_until_pass(
 
         # 将去 AI 味作为 ai_trace 维度的专属修订策略并入唯一审计循环
         if ENABLE_ANTI_AI_REWRITE:
-            if ai_trace_score < ai_trace_hard_threshold and reference_text:
+            ai_trace_findings = last_audit.get("ai_trace_rule_issues", []) or []
+            zhuque_sensitive_rules = {
+                "镜头指令词过密",
+                "短句阶梯铺陈",
+                "角色标签说明过密",
+                "口癖刷屏",
+                "句长同质化",
+                "段落等长",
+                "段尾总结腔",
+            }
+            needs_trace_rewrite = any(
+                isinstance(item, dict) and item.get("rule") in zhuque_sensitive_rules
+                for item in ai_trace_findings
+            )
+            if reference_text and not anti_ai_rewrite_used and (ai_trace_score < ai_trace_hard_threshold or needs_trace_rewrite):
                 style_compare = compare_reference_and_generated(reference_text, current)
                 current = anti_ai_rewrite_with_reference(
                     reference_text,
@@ -370,26 +448,34 @@ def audit_and_revise_until_pass(
                     chapter_number,
                     writing_style,
                     chapter_plan_text=chapter_plan_text,
-                    ai_trace_findings=last_audit.get("ai_trace_rule_issues", []),
+                    ai_trace_findings=ai_trace_findings,
                     model=generation_model,
                 )
-                print(
-                    f"ai_trace 硬阈值未达标（{ai_trace_score} < {ai_trace_hard_threshold}），已执行一次参考文去模板化修订。"
-                )
+                anti_ai_rewrite_used = True
+                if ai_trace_score < ai_trace_hard_threshold:
+                    print(
+                        f"ai_trace 硬阈值未达标（{ai_trace_score} < {ai_trace_hard_threshold}），已执行一次参考文去模板化修订。"
+                    )
+                else:
+                    print("命中朱雀高风险 AI 形态，已执行一次针对性去模板化修订。")
+                continue
             elif reference_text and not passed:
                 # 在总评未过但 ai_trace 达标时，保留一次轻量去模板化优化（避免误导为"未达标"）
-                style_compare = compare_reference_and_generated(reference_text, current)
-                current = anti_ai_rewrite_with_reference(
-                    reference_text,
-                    current,
-                    style_compare,
-                    chapter_number,
-                    writing_style,
-                    chapter_plan_text=chapter_plan_text,
-                    ai_trace_findings=last_audit.get("ai_trace_rule_issues", []),
-                    model=generation_model,
-                )
-                print("ai_trace 已达硬阈值，但总评未通过，已执行一次轻量去模板化优化。")
+                if ANTI_AI_REWRITE_ONLY_WHEN_BELOW_THRESHOLD:
+                    print("ai_trace 已达硬阈值，跳过去模板化修订，直接按审计反馈定向修订。")
+                else:
+                    style_compare = compare_reference_and_generated(reference_text, current)
+                    current = anti_ai_rewrite_with_reference(
+                        reference_text,
+                        current,
+                        style_compare,
+                        chapter_number,
+                        writing_style,
+                        chapter_plan_text=chapter_plan_text,
+                        ai_trace_findings=last_audit.get("ai_trace_rule_issues", []),
+                        model=generation_model,
+                    )
+                    print("ai_trace 已达硬阈值，但总评未通过，已执行一次轻量去模板化优化。")
 
         current = revise_chapter_by_audit_feedback(
             current,

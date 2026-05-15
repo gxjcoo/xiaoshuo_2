@@ -129,6 +129,14 @@ INTER_CHAPTER_SLEEP = int(os.environ.get("INTER_CHAPTER_SLEEP", "5"))
 ENABLE_ANTI_AI_REWRITE = True
 ANTI_AI_MAX_ROUNDS = 2
 AUDIT_MAX_REVISE_ROUNDS = 3
+# 性能开关：审计阶段的规则审计与结构贴合审计彼此独立，默认并行请求以减少单轮等待。
+AUDIT_PARALLEL_EVALUATORS = os.environ.get("AUDIT_PARALLEL_EVALUATORS", "1").strip() in {"1", "true", "True", "YES", "yes"}
+# 性能开关：确定性跨章衔接守卫已发现硬冲突时，默认跳过昂贵的 LLM 衔接复审。
+AUDIT_SKIP_LLM_CONTINUITY_ON_GUARD_FAIL = os.environ.get("AUDIT_SKIP_LLM_CONTINUITY_ON_GUARD_FAIL", "1").strip() in {"1", "true", "True", "YES", "yes"}
+# 性能开关：去 AI 味修订只在 ai_trace 真正低于硬阈值时触发，避免已达标章节反复长文本改写。
+ANTI_AI_REWRITE_ONLY_WHEN_BELOW_THRESHOLD = os.environ.get("ANTI_AI_REWRITE_ONLY_WHEN_BELOW_THRESHOLD", "1").strip() in {"1", "true", "True", "YES", "yes"}
+# 性能开关：正文生成已要求模型输出章节标题，默认复用该标题，避免额外标题 API。
+ENABLE_LLM_TITLE_GENERATION = os.environ.get("ENABLE_LLM_TITLE_GENERATION", "0").strip() in {"1", "true", "True", "YES", "yes"}
 # 最后一轮若仅差少量分数，允许“近阈值放行”以避免长时间重跑后仍不落盘
 AUDIT_NEAR_PASS_DELTA = 3
 

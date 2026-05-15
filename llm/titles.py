@@ -65,6 +65,16 @@ def _fallback_subtitle_from_reference(reference_chapter_text, chapter_number):
     return ""
 
 
+def title_from_existing_heading(chapter_number, heading_text="", chapter_content="", reference_chapter_text=""):
+    """优先复用正文生成阶段已有标题；没有可用标题时使用本地兜底，不发起 LLM 请求。"""
+    subtitle = _normalize_title_subtitle(heading_text, max_len=18)
+    if not subtitle:
+        subtitle = _fallback_subtitle_from_reference(reference_chapter_text, chapter_number)
+    if not subtitle:
+        subtitle = _fallback_subtitle_from_content(chapter_content)
+    return f"第{chapter_number}章 {subtitle or '未命名'}"
+
+
 def generate_title_from_chapter_content(chapter_number, chapter_content, reference_chapter_text=""):
     """根据章节正文生成更贴合内容的副标题。"""
     snippet = (chapter_content or "")[:2600]

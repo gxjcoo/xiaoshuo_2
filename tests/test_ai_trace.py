@@ -19,6 +19,10 @@ from ai_trace_rules import (
     _count_transition_words,
     _dialogue_voice_similarity,
     analyze_ai_trace,
+    _stage_direction_overuse_issue,
+    _brisk_short_sentence_ladder_issue,
+    _author_label_exposition_issue,
+    _catchphrase_overuse_issue,
 )
 from ai_trace_enhanced import (
     WritingStatistics,
@@ -187,6 +191,53 @@ class TestAnalyzeAITrace:
         )
         result = analyze_ai_trace(bad_text, recent_chapter_texts=[])
         assert result["score_penalty"] <= 55
+
+    def test_stage_direction_overuse_triggers_rule(self):
+        text = (
+            "日头唰地落下来。风猛地一卷，灯笼蹭地撞上柱子。"
+            "铜铃咻地乱响，他忽然抬头，火光稳稳停了两秒。"
+        ) * 12
+
+        item = _stage_direction_overuse_issue(text)
+
+        assert item is not None
+        assert item[0]["rule"] == "镜头指令词过密"
+
+    def test_brisk_short_sentence_ladder_triggers_rule(self):
+        paragraphs = [
+            "日头毒。",
+            "风停了。",
+            "云压下来。",
+            "灯笼乱撞。",
+            "铜铃响。",
+            "哭声近了。",
+            "他终于开口说话，打断这阵死一样的安静。",
+        ]
+
+        item = _brisk_short_sentence_ladder_issue(paragraphs)
+
+        assert item is not None
+        assert item[0]["rule"] == "短句阶梯铺陈"
+
+    def test_author_label_exposition_triggers_rule(self):
+        text = (
+            "张员外不停转着扳指，这是他心虚时的固定习惯。"
+            "玄昭捻了下领口线头，这是他装模作样施法前的专属小动作。"
+            "黄小幺爱藏吃的，是标准的黄鼠狼性子。"
+        )
+
+        item = _author_label_exposition_issue(text)
+
+        assert item is not None
+        assert item[0]["rule"] == "角色标签说明过密"
+
+    def test_catchphrase_overuse_triggers_rule(self):
+        text = "黄小幺喊：“那狗嗷得太凶嗷，我尾巴毛都掉了嗷，哥你还笑嗷，我不干了嗷！”"
+
+        item = _catchphrase_overuse_issue(text)
+
+        assert item is not None
+        assert item[0]["rule"] == "口癖刷屏"
 
 
 # =========================== ai_trace_enhanced：dialogue_ratio bug 回归 ===========================

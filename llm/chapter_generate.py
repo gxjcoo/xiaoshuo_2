@@ -2,7 +2,7 @@
 
 import json
 
-from config import CHAPTER_GENERATION_MODEL, CHAPTER_GENERATION_TEMPERATURE
+from config import CHAPTER_GENERATION_MODEL, CHAPTER_GENERATION_TEMPERATURE, ENABLE_LLM_TITLE_GENERATION
 
 from .client import call_deepseek_api
 from .prompts import (
@@ -13,7 +13,7 @@ from .prompts import (
     _slim_context_for_generation,
     _chapter_completion_max_tokens,
 )
-from .titles import generate_title_from_chapter_content
+from .titles import generate_title_from_chapter_content, title_from_existing_heading
 
 
 def generate_chapter_content(
@@ -144,6 +144,17 @@ def generate_chapter_content(
             f"- 最终输出只能是章节标题+正文，不得包含解释、注释、清单、表格\n\n"
         )
 
+    zhuque_anti_detection_contract = (
+        "【朱雀检测报告针对性避坑】\n"
+        "- 不要把氛围写成一串整齐短段：如“风起了/天黑了/灯笼响了/哭声来了”连续排队。需要时把两三句并进人物动作、对话或误判里。\n"
+        "- 少用“唰/蹭/咻/猛地/突然/稳稳/直挺挺”等舞台指令词；同一章每类最多偶尔出现，优先写具体物件和身体反应。\n"
+        "- 每 800 字左右至少给一处不太规整的人声：抱怨、抢话、半句吞回去、顺手提钱/吃食/旧账/小算盘，让段落有真人岔气。\n"
+        "- 不要用旁白替角色贴标签：避免“这是他的固定习惯/专属小动作/标准性子/每句末尾总爱……”这类说明。让习惯自己出现，别解释它。\n"
+        "- 口癖只能点到为止。同一段对白里同一个尾音最多 1-2 次，其余用停顿、吞字、动作和具体抱怨区分声线。\n"
+        "- 设定交代不要连续三段平铺。能从动作看出来的别解释，必须交代时夹在人物正在做的事里。\n"
+        "- 保留一点粗糙边角：长短段混排，允许一句话没说满，避免每段都像完成了起承转合。\n\n"
+    )
+
     core_requirements = (
         f"{reference_block}"
         f"{strict_plot_contract}"
@@ -163,6 +174,7 @@ def generate_chapter_content(
         f"【本章意图（须融化进场景；不得脱离结构骨架编造新主线）】\n"
         f"{chapter_plan_text if chapter_plan_text else '无（仍须严格按结构骨架的功能节点与场次写）'}\n\n"
         f"{implicit_two_phase_contract}"
+        f"{zhuque_anti_detection_contract}"
         f"{production_hard_rules}"
         f"{_entity_rewrite_block(entity_rewrite, entity_map)}"
         f"【核心创作要求】：\n"
@@ -279,17 +291,26 @@ def generate_chapter_content(
             print(f"已添加临时标题：# {potential_title}")
 
         content_lines = new_content.splitlines()
+        original_heading = content_lines[0].strip() if content_lines else ""
         body_lines = content_lines
         if content_lines and content_lines[0].strip().startswith("#"):
             body_lines = content_lines[1:]
             if body_lines and not body_lines[0].strip():
                 body_lines = body_lines[1:]
         body_text = "\n".join(body_lines).strip()
-        generated_title = generate_title_from_chapter_content(
-            chapter_number,
-            body_text,
-            reference_chapter_text=reference_chapter_text,
-        )
+        if ENABLE_LLM_TITLE_GENERATION:
+            generated_title = generate_title_from_chapter_content(
+                chapter_number,
+                body_text,
+                reference_chapter_text=reference_chapter_text,
+            )
+        else:
+            generated_title = title_from_existing_heading(
+                chapter_number,
+                heading_text=original_heading,
+                chapter_content=body_text,
+                reference_chapter_text=reference_chapter_text,
+            )
         new_content = f"# {generated_title}\n\n{body_text}" if body_text else f"# {generated_title}\n"
 
         return new_content
