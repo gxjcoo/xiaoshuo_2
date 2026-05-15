@@ -53,11 +53,14 @@ class WritingStatistics:
         """对话比例（有引号的行数占比）"""
         if not self.lines:
             return 0
+        non_empty_lines = [l for l in self.lines if l.strip()]
+        if not non_empty_lines:
+            return 0
         dialogue_lines = [
-            l for l in self.lines
-            if ("“" in l and "”" in l) or ('"', l) or ('"', l)
+            l for l in non_empty_lines
+            if ("“" in l and "”" in l) or ('"' in l) or ("'" in l)
         ]
-        return len(dialogue_lines) / len(self.lines)
+        return len(dialogue_lines) / len(non_empty_lines)
 
     def punctuation_patterns(self) -> Dict[str, float]:
         """标点模式统计"""

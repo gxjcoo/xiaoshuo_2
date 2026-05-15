@@ -25,5 +25,6 @@ pruned_context_archive.json
 all/
 
 # 测试 / 日志
+.pytest_cache/
 test_output*.txt
 *.log

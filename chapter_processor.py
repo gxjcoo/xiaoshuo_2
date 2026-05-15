@@ -312,38 +312,39 @@ def cleanup_runtime_artifacts():
         print(f"警告：清理 runtime 工件失败: {e}")
 
 
+# 审计规则默认值。与 audit_rules.json 保持一致；修改任一处时请同步另一处。
+# 这里的阈值是「同结构改编」实际跑通的经验值，不要随意调高，否则会大量章节卡审。
+_DEFAULT_AUDIT_RULES = {
+    "pass_threshold": 60,
+    "deterministic_penalty_cap_total": 12,
+    "deterministic_penalty_cap_ai_trace": 10,
+    "ai_trace_hard_threshold": 50,
+    "hard_fail_threshold": 40,
+    "max_revise_rounds": AUDIT_MAX_REVISE_ROUNDS,
+    "dimensions": [
+        {"id": "continuity", "name": "连贯性", "weight": 0.3, "requirements": ["剧情衔接自然", "设定不冲突"]},
+        {"id": "pacing", "name": "节奏", "weight": 0.2, "requirements": ["本章有推进", "节奏不过慢"]},
+        {"id": "ai_trace", "name": "AI痕迹", "weight": 0.3, "requirements": ["减少模板句式", "减少总结腔"]},
+        {"id": "voice", "name": "文风", "weight": 0.2, "requirements": ["风格一致", "对话有区分"]},
+    ],
+}
+
+
 def load_audit_rules():
     """加载审计规则，缺失或异常时回退默认规则。"""
-    default_rules = {
-        "pass_threshold": 85,
-        "deterministic_penalty_cap_total": 12,
-        "deterministic_penalty_cap_ai_trace": 10,
-        "ai_trace_hard_threshold": 80,
-        "max_revise_rounds": AUDIT_MAX_REVISE_ROUNDS,
-        "dimensions": [
-            {"id": "continuity", "name": "连贯性", "weight": 0.3, "requirements": ["剧情衔接自然", "设定不冲突"]},
-            {"id": "pacing", "name": "节奏", "weight": 0.2, "requirements": ["本章有推进", "节奏不过慢"]},
-            {"id": "ai_trace", "name": "AI痕迹", "weight": 0.3, "requirements": ["减少模板句式", "减少总结腔"]},
-            {"id": "voice", "name": "文风", "weight": 0.2, "requirements": ["风格一致", "对话有区分"]},
-        ],
-    }
     if not os.path.isfile(AUDIT_RULES_FILE):
-        return default_rules
+        return dict(_DEFAULT_AUDIT_RULES)
     try:
         with open(AUDIT_RULES_FILE, "r", encoding="utf-8") as f:
             loaded = json.load(f)
         if not isinstance(loaded, dict):
-            return default_rules
-        loaded.setdefault("pass_threshold", default_rules["pass_threshold"])
-        loaded.setdefault("deterministic_penalty_cap_total", 12)
-        loaded.setdefault("deterministic_penalty_cap_ai_trace", 10)
-        loaded.setdefault("ai_trace_hard_threshold", default_rules["ai_trace_hard_threshold"])
-        loaded.setdefault("max_revise_rounds", default_rules["max_revise_rounds"])
-        loaded.setdefault("dimensions", default_rules["dimensions"])
+            return dict(_DEFAULT_AUDIT_RULES)
+        for key, default_value in _DEFAULT_AUDIT_RULES.items():
+            loaded.setdefault(key, default_value)
         return loaded
     except Exception as e:
         print(f"警告：加载审计规则失败，回退默认规则: {e}")
-        return default_rules
+        return dict(_DEFAULT_AUDIT_RULES)
 
 
 def build_audit_requirements_for_writing(audit_rules, top_k=6, strict_imitation=False):

@@ -41,122 +41,18 @@ output_chapters/N.md
 
 ---
 
-## 新增核心模块（可选使用）
+## 主链路之外的辅助能力
 
-项目新增了 4 个核心增强模块，解决原有流程中的痛点：
+| 模块 | 真实接入位置 | 作用 |
+|------|--------------|------|
+| `structured_types.py`（`SceneNode`、`ChapterOutline`） | `outline_extractor` → `chapter_processor.process_chapter` | 把参考章结构骨架抽成 AST 缓存到 `runtime/chapter-XXXX.structured_outline.json` |
+| `audit_enhanced.AuditHistory` | `audit_pipeline.audit_and_revise_until_pass` | 审计分数 Plateau 检测，连续 3 轮变化 <2 时回退到历史最佳版本 |
+| `ai_trace_enhanced.enhanced_ai_trace_analysis` | `ai_trace_rules.analyze_ai_trace`（仅当 combined_score≥60 时叠加扣分） | 句长/段长 CV、过渡词密度等统计特征 |
 
-| 痛点 | 新增模块 | 解决的问题 |
-|------|----------|-----------|
-| 结构骨架格式不稳定 | `structured_types.py` + `outline_extractor.py` | 用 JSON Schema 强制结构化 AST |
-| 审计反馈模糊（「连贯性不够」） | `audit_enhanced.py` | 具体位置 + 修改建议 + Plateau 检测 |
-| 上下文容易忘记角色设定 | `StoryKnowledgeBase` (in `structured_types.py`) | 知识库 + 实体归一 |
-| AI 痕迹只看表面词 | `ai_trace_enhanced.py` | 句子/段落长度分布统计分析 |
-
----
-
-## 新功能快速上手
-
-### 1. 提取结构化骨架（可选）
-
-```python
-from outline_extractor import (
-    extract_structured_outline_from_reference,
-    build_generation_prompt_from_outline,
-)
-
-outline = extract_structured_outline_from_reference(
-    reference_text,
-    chapter_number=1,
-    strict_source_plot=True,
-)
-# outline.scenes 是结构化的场景列表
-# outline.chapter_goal, outline.core_conflict...
-
-# 然后可以用它构建生成提示词
-prompt = build_generation_prompt_from_outline(
-    outline,
-    writing_style,
-    story_context,
-    domain_spec,
-    chapter_number=1,
-)
-```
-
-### 2. 使用增强审计（可选）
-
-```python
-from audit_enhanced import (
-    run_enhanced_audit,
-    build_revision_prompt,
-    AuditHistory,
-    format_audit_summary,
-)
-
-# 审计历史追踪，用于 Plateau 检测
-history = AuditHistory()
-
-# 运行增强审计
-audit_result = run_enhanced_audit(
-    generated_text,
-    dimension_scores,
-    pass_threshold=85.0,
-    reference_text=reference_text,
-    history=history,
-)
-
-# audit_result.feedback_items 是具体的修改建议
-print(format_audit_summary(audit_result))
-
-# 构建修订提示词
-if audit_result.should_revise and not audit_result.plateau_detected:
-    revise_prompt = build_revision_prompt(generated_text, audit_result)
-```
-
-### 3. 使用知识库管理上下文（可选）
-
-```python
-from structured_types import (
-    StoryKnowledgeBase,
-    CharacterState,
-    Conflict,
-    ItemInfo,
-)
-
-kb = StoryKnowledgeBase()
-
-# 添加角色
-kb.add_character(CharacterState(
-    name="宝寿道长",
-    aliases=["年轻道士", "他"],
-    current_goal="赚够钱建道观",
-    current_emotion="calm",
-))
-
-# 添加钩子
-kb.add_hook("小熊似乎藏着什么秘密")
-
-# 生成提示词用的上下文摘要
-print(kb.to_context_prompt())
-
-# 保存/加载
-kb_json = kb.to_json()
-kb2 = StoryKnowledgeBase.from_json(kb_json)
-```
-
-### 4. 增强 AI 痕迹检测（可选）
-
-```python
-from ai_trace_enhanced import (
-    enhanced_ai_trace_analysis,
-    format_ai_trace_report,
-)
-
-analysis = enhanced_ai_trace_analysis(generated_text)
-print(format_ai_trace_report(analysis))
-
-# analysis["combined_score"] 是综合得分（0-100，越高越像 AI）
-# analysis["statistical_details"] 包含句子长度 CV、段落长度 CV 等
-```
+> 注：早期版本在 README 里描述过 `StoryKnowledgeBase` / `run_enhanced_audit` /
+> `build_revision_prompt` 等接口，但实际从未接入主链路。已在收尾时移除，避免
+> 「文档承诺 ≠ 实际行为」。结构化骨架的提示词构建当前仍走 `ai_handler` 里
+> 已经在用的文本路径。
 
 ## 环境
 
@@ -169,6 +65,15 @@ pip install -r requirements.txt
 ```bash
 cp .env.example .env
 # 编辑 .env 填入 API Key 等
+```
+
+## 开发与测试
+
+单元测试覆盖不调用 LLM 的确定性逻辑（实体映射、参考相似度、`ai_trace_rules` 等），无需配置 API Key 即可运行。
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/ -v
 ```
 
 ## 目录约定（运行时自建亦可）
@@ -187,8 +92,8 @@ cp .env.example .env
 | --- | --- |
 | `app.py` | 命令行入口，解析章节范围并批量调用处理流程 |
 | `chapter_processor.py` | 单章处理编排：读参考章、生成、审计、落盘、写 runtime |
-| `ai_handler.py` | LLM 调用封装，负责风格分析、章节规划、正文生成、标题生成、上下文分析 |
-| `audit_pipeline.py` | 审计评分与修订闭环，结合规则审计和 AI 痕迹检测 |
+| `ai_handler.py` | 兼容入口（转发到 `llm/` 包）；实现见 `llm/client.py`、`llm/chapter_generate.py` 等 |
+| `audit_pipeline.py` | 兼容入口（转发到 `audit/` 包）；实现见 `audit/pipeline.py` 等 |
 | `ai_trace_rules.py` | 确定性 AI 痕迹规则检测，如句式同构、说明腔、对话同腔化 |
 | `context_manager.py` | 维护 `story_context.json`，管理长期上下文、伏笔、核心角色和物品 |
 | `domain_spec_loader.py` | 加载 `author_intent.md`、`current_focus.md` |
@@ -196,14 +101,16 @@ cp .env.example .env
 
 ---
 
-## 新增模块（增强功能）
+## 辅助模块
 
-| 文件 | 职责 | 优先级 |
-| --- | --- | --- |
-| `structured_types.py` | 结构化类型：SceneNode, ChapterOutline, AuditFeedbackItem, StoryKnowledgeBase | P0 |
-| `outline_extractor.py` | 结构化骨架提取 + 生成提示词构建 | P0 |
-| `audit_enhanced.py` | 增强审计：可操作的 diff 反馈 + Plateau 检测 | P0 |
-| `ai_trace_enhanced.py` | 增强 AI 痕迹检测：统计分布对比 | P1 |
+| 文件 | 职责 |
+| --- | --- |
+| `audit/` | 审计子包：`metrics`、`evaluators`、`revisers`、`pipeline`；`audit_pipeline.py` 为兼容转发 |
+| `llm/` | LLM 子包：`client`（统一 API）、`prompts`、`titles`、`outline_extract`、`style_analysis`、`chapter_plan`、`hooks`、`chapter_generate`、`context_analysis`；`ai_handler.py` 为兼容转发 |
+| `structured_types.py` | 结构骨架 AST 类型：`SceneNode` / `ChapterOutline` |
+| `outline_extractor.py` | 从参考章抽取结构化骨架（JSON Schema 模式） |
+| `audit_enhanced.py` | `AuditHistory`：审计分数 Plateau 检测 |
+| `ai_trace_enhanced.py` | 基于句长/段长 CV 等统计特征的 AI 痕迹辅助评分 |
 
 ## 数据与运行产物
 
@@ -295,14 +202,3 @@ python rename_chapters.py chapters_out
 - **DeepSeek 连接失败**：增大 `API_MAX_RETRIES`、`API_HTTP_READ_TIMEOUT`；或换 `LLM_PROVIDER=doubao`。
 - **换书后上下文串台**：删除本地 `story_context.json`、`runtime/`、`pruned_context_archive.json` 后重跑。
 
----
-
-## 向后兼容性说明
-
-所有新增模块都是**向后兼容**的：
-
-- `app.py` 原有主流程完全不变，不用改现有代码
-- 新增模块（`structured_types.py`、`outline_extractor.py`、`audit_enhanced.py`、`ai_trace_enhanced.py`）可以独立使用
-- 原有 `audit_pipeline.py`、`ai_trace_rules.py` 继续工作
-
-你可以**逐步集成**新功能，不需要一次性重构所有代码！
