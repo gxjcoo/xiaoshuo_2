@@ -83,7 +83,7 @@ python -m pytest tests/ -v
 | `input_chapters/` | 参考章：`1.md`、`2.md` …（自备） |
 | `output_chapters/` | 生成输出（默认） |
 | `chapters_out/` | `split_novel.py` 默认切章输出 |
-| `author_intent.md` / `current_focus.md` | 意图模板（可填） |
+| `current_focus.md` | 近几章临时焦点（可选；默认可不填） |
 | `runtime/`、`story_context.json` | 运行态（生成时出现，已在 `.gitignore`） |
 
 ## 核心模块
@@ -96,7 +96,7 @@ python -m pytest tests/ -v
 | `audit_pipeline.py` | 兼容入口（转发到 `audit/` 包）；实现见 `audit/pipeline.py` 等 |
 | `ai_trace_rules.py` | 确定性 AI 痕迹规则检测，如句式同构、说明腔、对话同腔化 |
 | `context_manager.py` | 维护 `story_context.json`，管理长期上下文、伏笔、核心角色和物品 |
-| `domain_spec_loader.py` | 加载 `author_intent.md`、`current_focus.md` |
+| `domain_spec_loader.py` | 加载 `current_focus.md` |
 | `config.py` | 配置中心，读取 `.env` 并定义模型、路径、审计和上下文参数 |
 
 ---
@@ -114,8 +114,7 @@ python -m pytest tests/ -v
 
 ## 数据与运行产物
 
-- `author_intent.md`：作者长期意图。
-- `current_focus.md`：近几章重点。
+- `current_focus.md`：近几章临时重点；项目默认依赖参考章结构骨架、上下章锚点和运行态上下文，不再读取人工维护的长期意图文件。
 - `story_context.json`：运行态故事上下文，记录最近剧情、伏笔、核心角色/道具等。
 - `runtime/chapter-xxxx.style.md`：参考章风格分析缓存，重跑同章时默认复用。
 - `runtime/chapter-xxxx.intent.md`：本章规划快照。
@@ -135,7 +134,7 @@ python split_novel.py path/to/novel.txt -o chapters_out
 python app.py --input_dir input_chapters --output_dir output_chapters --start_chapter 1 --end_chapter 10
 ```
 
-常用：`--chapter N`、`--length 3000`、`--no_strict_structure_adaptation`（实验模式）、`--force_reanalyze`（忽略缓存重分析）、`--analyze_only`（只生成分析工件）、`--no_entity_rewrite`（关闭实体改写）、`--entity_preview`（只扫描实体、打印映射表）、`--sleep N`（章节间等待秒数，默认 5）。
+常用：`--chapter N`、`--length 3000`、`--no_strict_structure_adaptation`（实验模式）、`--force_reanalyze`（忽略缓存重分析）、`--analyze_only`（只生成分析工件）、`--no_entity_rewrite`（关闭实体改写）、`--entity_preview`（只扫描实体、打印映射表）、`--no_entity_prescan`（关闭正式运行前实体预扫描）、`--sleep N`（章节间等待秒数，默认 5）。
 
 ### 实体改写（默认开启）
 
@@ -143,6 +142,7 @@ python app.py --input_dir input_chapters --output_dir output_chapters --start_ch
 
 - 自动扫描参考章里的**角色名、地名、事件名、物件/动物名**，调用 LLM 生成同风格新名。
 - 维护项目级词典 `runtime/global_entity_map.json`，**同一原名跨章永远映射到同一新名**，避免章节间「同人异名」。
+- 正式运行前会默认预扫目标章节及下一章，把跨章衔接预览里首次出现的实体也提前纳入映射；调试时可用 `--no_entity_prescan` 关闭。
 - 在所有 LLM 调用前先把参考原文、上一章衔接、下一章预览、风格备忘、骨架、意图都替换为新名；写盘前再做一次硬清洗。
 - 审计阶段检测残留时会先硬替换、再扣分，并把残留明细注入修订 prompt。
 
@@ -188,8 +188,9 @@ python rename_chapters.py chapters_out
 ## 配置说明
 
 - 提供商与模型：`config.py` + `.env`（`LLM_PROVIDER`、`DEEPSEEK_*`、`DOUBAO_*` 等）
-- 审计门槛：见 `audit_rules.json`，可用环境变量覆盖（见 `config.py` 中 `AUDIT_*`）
+- 审计门槛：见 `audit_rules.json`，当前总分阈值默认 `68`；规则审计与结构贴合审计同时空响应时不会正式落盘。
 - 参考相似度与结构骨架贴合：见 `audit_rules.json` 中 `reference_similarity`、`plot_fidelity_min_score`；也可用 `.env` 中 `REFERENCE_SIMILARITY_*`、`PLOT_FIDELITY_MIN_SCORE` 设置默认值。
+- LLM 调试日志默认关闭；需要排查接口返回时可在 `.env` 中设置 `DEBUG_LLM_LOG=1`。
 - `.env` 可能包含真实 API Key，已被 `.gitignore` 忽略，不要提交。
 
 ## 当前工作区提示

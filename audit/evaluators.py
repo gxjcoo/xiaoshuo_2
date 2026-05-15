@@ -80,6 +80,78 @@ def evaluate_plot_fidelity_with_outline(
         return {"score": 0, "pass": False, "issues": ["结构骨架审计 JSON 解析失败"], "suggestions": []}
 
 
+def evaluate_next_anchor_continuity(
+    generated_tail,
+    next_chapter_start,
+    chapter_number,
+    model="deepseek-chat",
+):
+    """用结构化 JSON 检查本章结尾是否能接入下一章开头。"""
+    if not next_chapter_start:
+        return {"score": 100, "pass": True, "issues": [], "suggestions": []}
+    prompt = (
+        f"请检查第 {chapter_number} 章结尾是否能自然接入第 {chapter_number + 1} 章开头，输出 JSON。\n"
+        "只判断衔接逻辑，不评价文笔。重点抽取：下一章开头的呼喊/追逐对象、冲突对象、主角所处位置、是否存在误会指向。\n\n"
+        "字段必须为：\n"
+        "{\n"
+        '  "score": number,\n'
+        '  "pass": bool,\n'
+        '  "next_anchor": {"protagonist_position": string, "conflict_target": string, "speaker_intent": string},\n'
+        '  "tail_state": {"protagonist_position": string, "conflict_target": string, "hook_direction": string},\n'
+        '  "issues": [string],\n'
+        '  "suggestions": [string]\n'
+        "}\n\n"
+        "评分规则：\n"
+        "- 90-100：对象、事件、时间线、主角位置都可自然接上。\n"
+        "- 70-89：略有信息缺口，但不改变下一章开头含义。\n"
+        "- 40-69：钩子方向偏弱或对象含混，需要修订。\n"
+        "- 0-39：本章结尾与下一章开头矛盾，例如下一章说被追对象另有其人，本章却写成主角被明确抓捕/定罪。\n"
+        "pass 仅当 score>=75 且无硬冲突时为 true。\n\n"
+        f"【本章结尾】\n{generated_tail}\n\n"
+        f"【下一章开头】\n{next_chapter_start}"
+    )
+    messages = [
+        {"role": "system", "content": "你是连载小说跨章衔接审稿器，只输出合法 JSON。"},
+        {"role": "user", "content": prompt},
+    ]
+    raw = call_deepseek_api(
+        messages,
+        model,
+        max_tokens=900,
+        temperature=0.05,
+        response_format={"type": "json_object"},
+    )
+    if not raw:
+        return {
+            "score": 0,
+            "pass": False,
+            "issues": ["跨章衔接结构化审计失败：API 返回为空"],
+            "suggestions": ["重试审计，或人工检查本章结尾与下一章开头的对象、事件、主角位置是否一致。"],
+        }
+    parsed = _parse_json_relaxed(raw)
+    if not isinstance(parsed, dict):
+        return {
+            "score": 0,
+            "pass": False,
+            "issues": ["跨章衔接结构化审计 JSON 解析失败"],
+            "suggestions": ["重试审计，或人工检查本章结尾与下一章开头。"],
+        }
+    try:
+        score = int(parsed.get("score", 0))
+    except Exception:
+        score = 0
+    issues = parsed.get("issues", [])
+    suggestions = parsed.get("suggestions", [])
+    return {
+        "score": score,
+        "pass": bool(parsed.get("pass", False)) and score >= 75,
+        "next_anchor": parsed.get("next_anchor", {}) if isinstance(parsed.get("next_anchor", {}), dict) else {},
+        "tail_state": parsed.get("tail_state", {}) if isinstance(parsed.get("tail_state", {}), dict) else {},
+        "issues": issues if isinstance(issues, list) else [],
+        "suggestions": suggestions if isinstance(suggestions, list) else [],
+    }
+
+
 def _extract_balanced_json(text):
     if not text:
         return ""
@@ -140,7 +212,6 @@ def evaluate_chapter_with_rules(
     rules,
     recent_chapter_texts=None,
     chapter_plan_text="",
-    author_intent_text="",
     current_focus_text="",
     model="deepseek-chat",
 ):
@@ -155,7 +226,6 @@ def evaluate_chapter_with_rules(
         f'{{"total_score": number, "pass": bool, "dimension_scores": {{"id": number}}, "issues": [string], "suggestions": [string]}}\n'
         f"规则如下：\n{rules_json}\n\n"
         f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
-        f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}\n\n"
         f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}\n\n"
         f"【正文】\n{chapter_content[:9000]}"
     )

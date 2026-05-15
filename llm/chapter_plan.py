@@ -13,7 +13,6 @@ def plan_chapter_with_ai(
     target_chapter_number,
     previous_chapter_content=None,
     next_chapter_preview="",
-    author_intent_text="",
     current_focus_text="",
     reference_chapter_text="",
     strict_source_plot=False,
@@ -31,7 +30,7 @@ def plan_chapter_with_ai(
             "本章意图必须能从「本章参考原文节选」中推导：只拆解已有场景功能、冲突功能与信息点，写成可执行改编点；"
             "不得新增参考原文里不存在的关键结构功能、不得改因果位置与结局功能。"
             "不要摘抄原文句子，不要把原文段落节奏写成计划。\n"
-            "若与【作者长期意图】【近期焦点】或 JSON 上下文冲突，一律以参考原文为准，其余仅作语气参考。\n\n"
+            "若与【近期焦点】或 JSON 上下文冲突，一律以参考原文为准，其余仅作语气参考。\n\n"
             f"【本章参考原文节选（意图规划唯一情节依据）】\n```\n{ref_snip}\n```\n\n"
         )
     prompt = (
@@ -47,7 +46,6 @@ def plan_chapter_with_ai(
         f"【当前上下文】\n{context_json}\n\n"
         f"【上一章结尾（衔接用，可选）】\n{previous_tail if previous_tail else '无'}\n\n"
         f"【下一章开头（本章结尾硬约束，可选）】\n{next_head if next_head else '无'}\n\n"
-        f"【作者长期意图（可选）】\n{author_intent_text if author_intent_text else '无'}\n\n"
         f"【近期焦点（可选）】\n{current_focus_text if current_focus_text else '无'}\n"
     )
     system_msg = "你擅长把「同结构改编」任务拆成可执行写作点：只拆解参考里的结构功能，不发明新主线，也不复刻原文表达和实体体系。"

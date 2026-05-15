@@ -170,7 +170,6 @@ def revise_chapter_by_audit_feedback(
     writing_style,
     audit_result,
     chapter_plan_text="",
-    author_intent_text="",
     current_focus_text="",
     focus_dimensions=None,
     model="deepseek-chat",
@@ -189,7 +188,6 @@ def revise_chapter_by_audit_feedback(
         f"【审计结果】\n{feedback_json}\n\n"
         f"【风格分析】\n{writing_style}\n\n"
         f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
-        f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}\n\n"
         f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}\n\n"
         f"【当前正文】\n{chapter_content}"
     )

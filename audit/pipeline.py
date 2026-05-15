@@ -26,6 +26,7 @@ from .metrics import (
 from .evaluators import (
     evaluate_chapter_with_rules,
     evaluate_plot_fidelity_with_outline,
+    evaluate_next_anchor_continuity,
 )
 from .revisers import (
     revise_for_plot_fidelity,
@@ -48,6 +49,57 @@ def _pick_focus_dimensions(dimension_scores):
     return [dim for dim, _ in normalized[:2]]
 
 
+def _has_any(text, terms):
+    return any(term in text for term in terms)
+
+
+def _append_audit_issue(last_audit, issue, suggestion):
+    issues = last_audit.get("issues", []) or []
+    suggestions = last_audit.get("suggestions", []) or []
+    issues.append(issue)
+    suggestions.append(suggestion)
+    last_audit["issues"] = issues
+    last_audit["suggestions"] = suggestions
+
+
+def _next_anchor_conflict_issues(gen_end, next_chapter_start):
+    """确定性识别本章结尾与下一章开头的硬冲突。"""
+    if not next_chapter_start:
+        return []
+    issues = []
+    next_start = next_chapter_start.strip()
+    generated_tail = gen_end.strip()
+
+    chase_terms = ("追", "追杀", "追来", "追赶", "逃", "拦路")
+    if _has_any(next_start, chase_terms) and not _has_any(generated_tail, chase_terms):
+        issues.append((
+            "[continuity] 下一章开头存在追逐/追杀/逃避类动作，但本章结尾没有铺垫对应压力。",
+            "重写本章结尾，让钩子落在下一章开头已经确定的追逐对象、冲突来源和行动方向上。",
+        ))
+
+    reveal_terms = ("而不是", "原来是", "不是他", "不是她", "并非")
+    evil_other_terms = ("老者", "老家伙", "妖道", "邪气", "骷髅", "婴儿")
+    mistaken_capture_terms = ("捕快", "官差", "衙役", "巡捕", "差役", "拿人", "缉拿")
+    restrain_terms = ("堵", "围", "拦", "抓", "拿", "锁", "押", "缉", "擒")
+    if (
+        _has_any(next_start, reveal_terms)
+        and _has_any(next_start, evil_other_terms)
+        and _has_any(generated_tail, mistaken_capture_terms)
+        and _has_any(generated_tail, restrain_terms)
+    ):
+        issues.append((
+            "[continuity] 下一章开头揭示被追/被喊的对象另有其人，但本章结尾写成主角被捕快或官差明确围捕。",
+            "重写本章结尾：只铺垫真正的追杀者或旁侧冲突，不要把主角写成已被明确定罪、抓捕或围堵的对象。",
+        ))
+
+    if "为何不助我" in next_start and _has_any(generated_tail, mistaken_capture_terms):
+        issues.append((
+            "[continuity] 下一章开头把主角放在可被求助的旁观/介入位置，但本章结尾把他放进官差围捕场。",
+            "让本章结尾保留主角可回头介入的空间，避免用捕快堵门、官差拿人等结局功能覆盖下一章开场。",
+        ))
+    return issues
+
+
 def audit_and_revise_until_pass(
     chapter_content,
     chapter_number,
@@ -57,7 +109,6 @@ def audit_and_revise_until_pass(
     reference_text="",
     reference_plot_outline="",
     chapter_plan_text="",
-    author_intent_text="",
     current_focus_text="",
     generation_model=CHAPTER_GENERATION_MODEL,
     analysis_model=CONTEXT_ANALYSIS_MODEL,
@@ -89,6 +140,7 @@ def audit_and_revise_until_pass(
     }
 
     for round_idx in range(max_rounds + 1):
+        plateau_detected = False
         # 入轮先做一次实体硬清洗，确保上一轮任何修订都没把原名引回来
         if entity_rewrite and entity_map:
             from entity_rewriter import apply_entity_rewrite as _apply_rewrite
@@ -99,7 +151,6 @@ def audit_and_revise_until_pass(
             rules,
             recent_chapter_texts=recent_chapter_texts,
             chapter_plan_text=chapter_plan_text,
-            author_intent_text=author_intent_text,
             current_focus_text=current_focus_text,
             model=analysis_model,
         )
@@ -122,15 +173,18 @@ def audit_and_revise_until_pass(
         )
         similarity_ok = not bool(similarity_report.get("too_similar", False))
         plot_ok = bool(plot_report.get("pass", True))
-        # 兜底: 两个审计 API 都空响应 → 信任生成质量，直接放行
+        # 审计 API 双空时不能正式放行：结构/衔接风险不可被“空响应”覆盖。
         both_api_empty = (score == 0 and plot_report.get("score", 0) == 0)
         if both_api_empty:
-            score = 75
-            ai_trace_score = 80
-            plot_ok = True
-            last_audit["pass"] = True
-            last_audit["total_score"] = score
-            print(f"  审计+结构贴合 API 双空，信任生成质量放行: score={score}")
+            last_audit["pass"] = False
+            last_audit["total_score"] = 0
+            last_audit["issues"] = (last_audit.get("issues", []) or []) + [
+                "[audit_empty] 规则审计与结构贴合审计均返回空响应，本轮不得正式落盘。"
+            ]
+            last_audit["suggestions"] = (last_audit.get("suggestions", []) or []) + [
+                "请重试审计或检查模型/API 状态；必要时先人工检查当前稿件后再重新运行。"
+            ]
+            print("  审计+结构贴合 API 双空，本轮不允许正式放行。")
         elif score == 0 and plot_report.get("score", 0) > 0:
             score = int(plot_report.get("score", 0))
             last_audit["pass"] = True
@@ -143,15 +197,10 @@ def audit_and_revise_until_pass(
         if score > best_version["score"]:
             best_version = {"score": score, "content": current, "audit": last_audit}
         if audit_history.is_plateau(threshold=2.0, lookback=3):
+            plateau_detected = True
             print(f"  Plateau: 连续3轮分数变化<2，当前={score} 历史最佳={best_version['score']}")
             if best_version["score"] >= pass_threshold:
-                current = best_version["content"]
-                last_audit = best_version["audit"]
-                print(f"  历史最佳已达标，返回该版本")
-                break
-            elif round_idx >= max_rounds - 1:
-                print(f"  已达最大轮次，提前结束")
-                break
+                print("  历史最佳分数已达标，但仍需通过实体/相似度/结构/双向衔接硬门槛")
         passed = (
             bool(last_audit.get("pass", False))
             and score >= pass_threshold
@@ -227,9 +276,29 @@ def audit_and_revise_until_pass(
                     hook_matched = False
                     print(f"  双向衔接: 本章开头与上一章结尾衔接偏弱 (dice={overlap:.2f})")
             if next_chapter_start:
-                if "追" in next_chapter_start and "追" not in gen_end:
+                continuity_issues = _next_anchor_conflict_issues(gen_end, next_chapter_start)
+                if continuity_issues:
                     hook_matched = False
-                    print(f"  双向衔接: 下一章开头有'追迹'类动作，但本章结尾未铺垫")
+                    for issue, suggestion in continuity_issues:
+                        print(f"  双向衔接: {issue}")
+                        _append_audit_issue(last_audit, issue, suggestion)
+                continuity_report = evaluate_next_anchor_continuity(
+                    gen_end,
+                    next_chapter_start,
+                    chapter_number,
+                    model=analysis_model,
+                )
+                last_audit["next_anchor_continuity"] = continuity_report
+                if not continuity_report.get("pass", True):
+                    hook_matched = False
+                    report_score = continuity_report.get("score", 0)
+                    print(f"  双向衔接结构化审计未通过: score={report_score}")
+                    for issue in continuity_report.get("issues", []) or []:
+                        _append_audit_issue(
+                            last_audit,
+                            f"[continuity] {issue}",
+                            "按下一章开头重写本章结尾，确保对象、事件、主角位置和误会指向一致。",
+                        )
 
         if passed and not hook_matched:
             print("  双向衔接未通过，本轮不计为通过")
@@ -237,13 +306,18 @@ def audit_and_revise_until_pass(
 
         if passed:
             return {"passed": True, "content": current, "last_audit": last_audit}
+        if plateau_detected and round_idx >= max_rounds:
+            print("  Plateau: 已到最后一轮且硬门槛未通过，结束审计")
+            break
         # 最后一轮仅差少量分数时，允许近阈值放行，避免长时间重跑后仍完全不落盘
         if (
             round_idx == max_rounds
+            and not both_api_empty
             and score >= max(0, pass_threshold - AUDIT_NEAR_PASS_DELTA)
             and ai_trace_score >= ai_trace_hard_threshold
             and similarity_ok
             and plot_ok
+            and hook_matched
         ):
             print(
                 f"规则审计近阈值放行: {score} (阈值 {pass_threshold}, 容差 {AUDIT_NEAR_PASS_DELTA})"
@@ -323,13 +397,17 @@ def audit_and_revise_until_pass(
             writing_style,
             last_audit,
             chapter_plan_text=chapter_plan_text,
-            author_intent_text=author_intent_text,
             current_focus_text=current_focus_text,
             focus_dimensions=_pick_focus_dimensions(last_audit.get("dimension_scores", {})),
             model=generation_model,
         )
-    # 最终兜底: 审计 API 持续空响应 → 信任生成质量直接落盘
+    # 最终兜底: 审计 API 持续空响应时返回失败，不正式落盘。
     if best_version["score"] == 0 and len(audit_history.scores) >= 2:
-        print("审计 API 持续空响应，信任生成质量，强制落盘")
-        return {"passed": True, "content": best_version["content"], "last_audit": best_version["audit"]}
+        last_audit = best_version["audit"]
+        last_audit["pass"] = False
+        last_audit["issues"] = (last_audit.get("issues", []) or []) + [
+            "[audit_empty] 审计 API 持续空响应，已拒绝正式落盘。"
+        ]
+        print("审计 API 持续空响应，拒绝正式落盘。")
+        return {"passed": False, "content": best_version["content"], "last_audit": last_audit}
     return {"passed": False, "content": current, "last_audit": last_audit}

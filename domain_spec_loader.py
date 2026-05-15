@@ -2,9 +2,7 @@
 import os
 
 from config import (
-    AUTHOR_INTENT_FILE,
     CURRENT_FOCUS_FILE,
-    MAX_AUTHOR_INTENT_CHARS,
     MAX_CURRENT_FOCUS_CHARS,
 )
 
@@ -21,13 +19,6 @@ def _load_optional_text_file(path, max_chars, label):
     if len(text) > max_chars:
         text = text[:max_chars] + f"\n\n…（{label} 已按长度截断）"
     return text
-
-
-def load_author_intent_text(path=None, max_chars=None):
-    """读取作者长期意图文档 author_intent.md。max_chars 默认 MAX_AUTHOR_INTENT_CHARS。"""
-    target = path or AUTHOR_INTENT_FILE
-    cap = int(max_chars) if max_chars is not None else MAX_AUTHOR_INTENT_CHARS
-    return _load_optional_text_file(target, max(200, cap), "author_intent")
 
 
 def load_current_focus_text(path=None, max_chars=None):

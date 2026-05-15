@@ -24,7 +24,6 @@ def generate_chapter_content(
     next_chapter_preview="",
     target_chapter_number=None,
     chapter_plan_text="",
-    author_intent_text="",
     current_focus_text="",
     audit_requirements_text="",
     reference_chapter_text="",
@@ -91,7 +90,7 @@ def generate_chapter_content(
             "1) 主事件功能、场景功能、因果位置、人物登场/退场功能与冲突结果功能须与结构骨架一致；不是续写新书、不是扩写无关支线。\n"
             "2) 允许更换人物名、地点名、事件名、动物/物件名和局部承接方式；不得写入骨架中不存在的关键结构功能。\n"
             "3) 禁止沿用参考原文的连续句式、段落推进、开头落点、结尾收束方式和实体体系；同一功能事件必须换一种现场展开。\n"
-            "4) 若作者长期意图、近期焦点、JSON 上下文或本章意图与结构骨架冲突，一律以结构骨架为准。\n"
+            "4) 若近期焦点、JSON 上下文或本章意图与结构骨架冲突，一律以结构骨架为准。\n"
             "5) 不得新增改变本章结构功能的支线或替换结局功能。\n\n"
         )
     else:
@@ -158,8 +157,6 @@ def generate_chapter_content(
         + f"【语言风格备忘（非提纲；禁止模仿下列编号、小标题或分析腔落笔）】\n{style_brief}\n\n"
         f"{current_context_summary}\n\n"
         f"{core_elements}\n\n"
-        f"【作者长期意图】\n{author_intent_text if author_intent_text else '无'}"
-        f"{'（严格模式下若与参考原文冲突则忽略）' if strict_source_plot else ''}\n\n"
         f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}"
         f"{'（严格模式下若与参考原文冲突则忽略）' if strict_source_plot else '（优先于长期意图）'}\n\n"
         f"【审计规则前置约束（写作时必须遵守）】\n{audit_requirements_text if audit_requirements_text else '无'}\n\n"

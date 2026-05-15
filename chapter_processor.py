@@ -27,7 +27,6 @@ from config import (
     MAX_RUNTIME_CHAPTER_ARTIFACTS,
     MAX_RUNTIME_INTENT_CHARS,
     MAX_RUNTIME_CONTEXT_SNAPSHOT_BYTES,
-    MAX_AUTHOR_STRICT_CHARS,
     MAX_FOCUS_STRICT_CHARS,
 )
 from context_manager import get_current_context, update_story_context_after_chapter
@@ -38,10 +37,7 @@ from ai_handler import (
     extract_plot_outline_from_reference,
 )
 from audit_pipeline import audit_and_revise_until_pass
-from domain_spec_loader import (
-    load_author_intent_text,
-    load_current_focus_text,
-)
+from domain_spec_loader import load_current_focus_text
 
 REFERENCE_STUB_TEMPLATE = """# 第{chapter}章 参考稿占位
 
@@ -104,9 +100,9 @@ def read_chapter_file(filepath):
         return None
 
 
-def get_chapter_start_end(chapter_content: str, lines_count: int = 5) -> Tuple[str, str]:
+def get_chapter_start_end(chapter_content: str, lines_count: int = 16) -> Tuple[str, str]:
     """
-    获取章节的开头和结尾（默认各5行）
+    获取章节的开头和结尾（默认各16行）
     返回：(开头文本, 结尾文本)
     """
     if not chapter_content:
@@ -121,12 +117,14 @@ def get_chapter_start_end(chapter_content: str, lines_count: int = 5) -> Tuple[s
 
 def preload_chapter_anchors(input_dir: str, start_chapter: int, end_chapter: int) -> Dict[int, Dict[str, str]]:
     """
-    预加载所有章节的首尾锚点，用于双向衔接校验
+    预加载目标范围及相邻边界章节的首尾锚点，用于双向衔接校验
     返回：{章节号: {"start": 开头文本, "end": 结尾文本}}
     """
     anchors = {}
-    print(f"正在预加载章节 {start_chapter} 到 {end_chapter} 的首尾锚点...")
-    for ch in range(start_chapter, end_chapter + 1):
+    anchor_start = max(1, start_chapter - 1)
+    anchor_end = max(end_chapter, start_chapter) + 1
+    print(f"正在预加载章节 {anchor_start} 到 {anchor_end} 的首尾锚点（含相邻边界章）...")
+    for ch in range(anchor_start, anchor_end + 1):
         filepath = os.path.join(input_dir, f"{ch}.md")
         if not os.path.isfile(filepath):
             continue
@@ -275,6 +273,73 @@ def write_runtime_artifacts(
         print(f"警告：写入 runtime 工件失败: {e}")
 
 
+def write_audit_failure_artifacts(
+    chapter_number,
+    audit_gate_result,
+    generated_content,
+    reference_text="",
+    prev_chapter_end="",
+    next_chapter_start="",
+    reference_plot_outline="",
+    input_filepath="",
+):
+    """写入审计失败诊断文件，便于查看原文、生成稿和具体失败原因。"""
+    try:
+        os.makedirs(RUNTIME_DIR, exist_ok=True)
+        last_audit = audit_gate_result.get("last_audit", {}) or {}
+        failed_content = audit_gate_result.get("content", generated_content) or generated_content or ""
+        base = os.path.join(RUNTIME_DIR, f"chapter-{chapter_number:04d}.audit_failed")
+        json_path = base + ".json"
+        md_path = base + ".md"
+
+        payload = {
+            "chapter": chapter_number,
+            "passed": bool(audit_gate_result.get("passed", False)),
+            "input_file": input_filepath,
+            "score": last_audit.get("total_score", 0),
+            "issues": last_audit.get("issues", []) or [],
+            "suggestions": last_audit.get("suggestions", []) or [],
+            "reference_similarity": last_audit.get("reference_similarity", {}),
+            "plot_fidelity": last_audit.get("plot_fidelity", {}),
+            "next_anchor_continuity": last_audit.get("next_anchor_continuity", {}),
+            "prev_chapter_end": prev_chapter_end,
+            "next_chapter_start": next_chapter_start,
+            "reference_excerpt": (reference_text or "")[:5000],
+            "generated_tail": "\n".join([line for line in failed_content.splitlines() if line.strip()][-20:]),
+            "reference_plot_outline": reference_plot_outline,
+        }
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+        issues_text = "\n".join(f"- {item}" for item in payload["issues"]) or "- 无"
+        suggestions_text = "\n".join(f"- {item}" for item in payload["suggestions"]) or "- 无"
+        md = (
+            f"# 第 {chapter_number} 章审计失败诊断\n\n"
+            f"- 参考文件：`{input_filepath}`\n"
+            f"- 审计分数：{payload['score']}\n"
+            f"- JSON 详情：`{json_path}`\n\n"
+            "## 失败原因\n\n"
+            f"{issues_text}\n\n"
+            "## 修订建议\n\n"
+            f"{suggestions_text}\n\n"
+            "## 下一章开头锚点\n\n"
+            f"```text\n{next_chapter_start or '无'}\n```\n\n"
+            "## 上一章结尾锚点\n\n"
+            f"```text\n{prev_chapter_end or '无'}\n```\n\n"
+            "## 原文节选\n\n"
+            f"```text\n{payload['reference_excerpt'] or '无'}\n```\n\n"
+            "## 失败稿尾部\n\n"
+            f"```text\n{payload['generated_tail'] or '无'}\n```\n\n"
+            "## 完整失败稿\n\n"
+            f"```markdown\n{failed_content or '无'}\n```\n"
+        )
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(md)
+        print(f"审计失败诊断已写入: {md_path}")
+    except Exception as e:
+        print(f"警告：写入审计失败诊断失败: {e}")
+
+
 def cleanup_runtime_artifacts():
     """仅保留最近 N 章 runtime 工件，避免 runtime 目录无限增长。"""
     try:
@@ -289,6 +354,10 @@ def cleanup_runtime_artifacts():
                 or name.endswith(".context.json")
                 or name.endswith(".trace.json")
                 or name.endswith(".outline.json")
+                or name.endswith(".structured_outline.json")
+                or name.endswith(".entity_map.json")
+                or name.endswith(".audit_failed.json")
+                or name.endswith(".audit_failed.md")
                 or name.endswith(".style.md")
             ):
                 continue
@@ -604,13 +673,9 @@ def process_chapter(
     )
 
     if strict_source_plot:
-        author_intent_text = load_author_intent_text(max_chars=MAX_AUTHOR_STRICT_CHARS)
         current_focus_text = load_current_focus_text(max_chars=MAX_FOCUS_STRICT_CHARS)
     else:
-        author_intent_text = load_author_intent_text()
         current_focus_text = load_current_focus_text()
-    if author_intent_text:
-        print("已加载作者长期意图: author_intent.md")
     if current_focus_text:
         print("已加载近期焦点: current_focus.md")
 
@@ -624,7 +689,6 @@ def process_chapter(
             chapter_number,
             previous_chapter_content=previous_chapter_content,
             next_chapter_preview=next_chapter_preview,
-            author_intent_text=author_intent_text,
             current_focus_text=current_focus_text,
             reference_chapter_text=original_content,
             strict_source_plot=strict_source_plot,
@@ -661,7 +725,6 @@ def process_chapter(
         next_chapter_preview,
         target_chapter_number=chapter_number,
         chapter_plan_text=chapter_plan_text,
-        author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
         audit_requirements_text=audit_requirements_text,
         reference_chapter_text=original_content,
@@ -687,7 +750,6 @@ def process_chapter(
         reference_text=original_content,
         reference_plot_outline=reference_plot_outline,
         chapter_plan_text=chapter_plan_text,
-        author_intent_text=author_intent_text,
         current_focus_text=current_focus_text,
         prev_chapter_end=prev_chapter_end,
         next_chapter_start=next_chapter_start,
@@ -697,7 +759,22 @@ def process_chapter(
     if not audit_gate_result.get("passed", False):
         score = audit_gate_result.get("last_audit", {}).get("total_score", 0)
         threshold = audit_rules.get("pass_threshold", 85)
-        print(f"章节 {chapter_number} 审计未达标（{score} < {threshold}），本次不落盘。")
+        issues = audit_gate_result.get("last_audit", {}).get("issues", []) or []
+        print(f"章节 {chapter_number} 审计未通过（score={score}, threshold={threshold}），本次不落盘。")
+        if issues:
+            print("未通过原因（前 5 条）：")
+            for item in issues[:5]:
+                print(f"  - {item}")
+        write_audit_failure_artifacts(
+            chapter_number,
+            audit_gate_result,
+            new_chapter_content,
+            reference_text=original_content,
+            prev_chapter_end=prev_chapter_end,
+            next_chapter_start=next_chapter_start,
+            reference_plot_outline=reference_plot_outline,
+            input_filepath=input_filepath,
+        )
         return False
 
     # 用审计返回后的内容覆盖（可能被修订过）
@@ -725,7 +802,6 @@ def process_chapter(
         {
             "chapter": chapter_number,
             "strict_source_plot": bool(strict_source_plot),
-            "has_author_intent": bool(author_intent_text),
             "has_current_focus": bool(current_focus_text),
             "audit_score": audit_gate_result.get("last_audit", {}).get("total_score", 0),
             "audit_passed": bool(audit_gate_result.get("passed", False)),

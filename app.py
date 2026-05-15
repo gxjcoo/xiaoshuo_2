@@ -13,6 +13,51 @@ from config import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, STRICT_SOURCE_PLOT, EN
 from context_manager import load_story_context # 直接使用返回的上下文
 from chapter_processor import process_chapter, preload_chapter_anchors
 
+
+def pre_scan_entities_for_range(input_dir, start_chapter, end_chapter, force_reanalyze=False):
+    """预扫描目标范围及下一章实体，保证跨章名称映射先于生成稳定下来。"""
+    from entity_rewriter import (
+        load_cached_entity_map,
+        load_global_entity_map,
+        save_global_entity_map,
+        extract_entity_map_from_reference,
+        merge_entity_maps,
+        save_entity_map,
+        flatten_entity_map,
+    )
+    from chapter_processor import read_chapter_file, reference_still_placeholder
+
+    global_map = load_global_entity_map()
+    scan_end = max(end_chapter, start_chapter) + 1
+    print(f"\n--- 实体预扫描：第 {start_chapter} 到 {scan_end} 章（含下一章预览）---")
+    scanned = 0
+    reused = 0
+    for ch in range(start_chapter, scan_end + 1):
+        filepath = os.path.join(input_dir, f"{ch}.md")
+        if not os.path.isfile(filepath):
+            continue
+        content = read_chapter_file(filepath)
+        if not content or reference_still_placeholder(content, ch):
+            continue
+
+        cached = None if force_reanalyze else load_cached_entity_map(ch)
+        if cached:
+            global_map = merge_entity_maps(global_map, cached, chapter_number=ch)
+            reused += 1
+            continue
+
+        print(f"  预扫描第 {ch} 章实体")
+        chapter_map = extract_entity_map_from_reference(content, ch, existing_map=global_map)
+        if chapter_map:
+            save_entity_map(ch, chapter_map)
+            global_map = merge_entity_maps(global_map, chapter_map, chapter_number=ch)
+            flat = flatten_entity_map(chapter_map)
+            print(f"    新增/确认 {sum(len(v) for v in flat.values())} 个实体映射")
+        scanned += 1
+
+    save_global_entity_map(global_map)
+    print(f"实体预扫描完成：新扫描 {scanned} 章，复用缓存 {reused} 章。")
+
 def main():
     start_time = time.time() # 记录开始时间
     parser = argparse.ArgumentParser(
@@ -81,6 +126,16 @@ def main():
         "--entity_preview",
         action="store_true",
         help="实体预演：只扫描所有参考章的实体名并打印全局映射表，不生成正文。确认映射无误后再正式跑。",
+    )
+    parser.add_argument(
+        "--no_entity_prescan",
+        action="store_true",
+        help="关闭正式运行前的实体预扫描。默认会预扫目标章节及下一章，保证跨章新名一致。",
+    )
+    parser.add_argument(
+        "--continue_on_failure",
+        action="store_true",
+        help="章节处理失败后仍继续后续章节。默认失败即停止，避免前章未落盘时生成后章。",
     )
     parser.add_argument(
         "--sleep", type=int, default=None,
@@ -220,6 +275,14 @@ def main():
         print("如需手动修正，可直接编辑该文件后正式跑。")
         return
 
+    if entity_rewrite and not getattr(args, "no_entity_prescan", False):
+        pre_scan_entities_for_range(
+            args.input_dir,
+            start_chapter,
+            end_chapter,
+            force_reanalyze=args.force_reanalyze,
+        )
+
     # --- 双向校验：预加载所有章节首尾锚点 ---
     chapter_anchors = preload_chapter_anchors(args.input_dir, start_chapter, end_chapter)
 
@@ -250,8 +313,9 @@ def main():
         if not success:
             print(f"章节 {chapter_num} 处理失败。耗时: {chapter_duration:.2f} 秒. (进度: {progress_percent:.1f}%)")
             all_successful = False
-            # 决定是否中断
-            # break # 如果希望失败时中断
+            if not args.continue_on_failure:
+                print("已停止后续章节处理：前序章节未成功落盘。若确需跳过失败章节继续，请显式传入 --continue_on_failure。")
+                break
         else:
              print(f"章节 {chapter_num} 处理成功。耗时: {chapter_duration:.2f} 秒. (进度: {progress_percent:.1f}%)")
              if not args.analyze_only and inter_chapter_sleep > 0 and chapter_num < end_chapter:
