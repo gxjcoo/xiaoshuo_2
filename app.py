@@ -59,6 +59,12 @@ def pre_scan_entities_for_range(input_dir, start_chapter, end_chapter, force_rea
     print(f"实体预扫描完成：新扫描 {scanned} 章，复用缓存 {reused} 章。")
 
 def main():
+    # 检查是否使用工作流模式
+    if len(sys.argv) > 1 and sys.argv[1] == "workflow":
+        from workflow.cli import main as workflow_main
+        workflow_main(sys.argv[2:])
+        return
+    
     start_time = time.time() # 记录开始时间
     parser = argparse.ArgumentParser(
         description=(

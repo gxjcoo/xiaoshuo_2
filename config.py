@@ -169,3 +169,47 @@ DEBUG_LLM_PREVIEW_CHARS = int(os.environ.get("DEBUG_LLM_PREVIEW_CHARS", "600"))
 # 0 = 默认走 OpenAI 兼容 chat.completions（更稳，适合本项目文本生成/JSON审计）
 # 1 = 优先走 Ark /responses（可能返回 reasoning 文本，适合特定场景）
 DOUBAO_USE_RESPONSES_API = os.environ.get("DOUBAO_USE_RESPONSES_API", "0").strip() in {"1", "true", "True", "YES", "yes"}
+
+
+# --- 工作流配置 ---
+# 工作流状态文件路径
+WORKFLOW_STATE_FILE = os.environ.get("WORKFLOW_STATE_FILE", "workflow_state.json")
+
+# 拆书分析配置
+# 采样策略：前N章
+DECOMPOSE_SAMPLE_FRONT = int(os.environ.get("DECOMPOSE_SAMPLE_FRONT", "3"))
+# 采样策略：中间N章
+DECOMPOSE_SAMPLE_MIDDLE = int(os.environ.get("DECOMPOSE_SAMPLE_MIDDLE", "2"))
+# 采样策略：末尾N章
+DECOMPOSE_SAMPLE_END = int(os.environ.get("DECOMPOSE_SAMPLE_END", "2"))
+# 拆书输出文件
+DECOMPOSE_OUTPUT_FILE = os.environ.get("DECOMPOSE_OUTPUT_FILE", "book_profile.json")
+# 拆书分析时每次 LLM 调用的最大字符数
+DECOMPOSE_MAX_CHARS_PER_CALL = int(os.environ.get("DECOMPOSE_MAX_CHARS_PER_CALL", "15000"))
+# 拆书分析使用的模型（默认使用上下文分析模型）
+DECOMPOSE_MODEL = os.environ.get("DECOMPOSE_MODEL", DEFAULT_LLM_MODEL)
+
+# 工作流自动跳过已完成任务
+WORKFLOW_AUTO_SKIP = os.environ.get("WORKFLOW_AUTO_SKIP", "1").strip() in {"1", "true", "True", "YES", "yes"}
+
+# 连贯性检查配置
+# 连贯性检查最低得分阈值（低于此值会发出警告）
+CONTINUITY_CHECK_MIN_SCORE = int(os.environ.get("CONTINUITY_CHECK_MIN_SCORE", "70"))
+# 连贯性检查使用的最大字符数
+CONTINUITY_CHECK_MAX_CHARS = int(os.environ.get("CONTINUITY_CHECK_MAX_CHARS", "4000"))
+
+# 伏笔管理配置
+# 最大未回收伏笔数量
+MAX_PENDING_FORESHADOWS = int(os.environ.get("MAX_PENDING_FORESHADOWS", "20"))
+# 伏笔分析使用的最大字符数
+FORESHADOW_ANALYSIS_MAX_CHARS = int(os.environ.get("FORESHADOW_ANALYSIS_MAX_CHARS", "4000"))
+
+# 风格一致性验证配置
+# 风格一致性最低得分阈值
+STYLE_CONSISTENCY_MIN_SCORE = int(os.environ.get("STYLE_CONSISTENCY_MIN_SCORE", "70"))
+# 风格一致性验证使用的最大字符数
+STYLE_CONSISTENCY_MAX_CHARS = int(os.environ.get("STYLE_CONSISTENCY_MAX_CHARS", "3000"))
+
+# 分卷处理配置
+# 每卷章节数
+VOLUME_SIZE = int(os.environ.get("VOLUME_SIZE", "20"))
