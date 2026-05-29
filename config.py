@@ -23,15 +23,20 @@ def _load_local_dotenv():
 _load_local_dotenv()
 
 # --- API 和路径配置 ---
-# 可选: "deepseek" | "doubao"
+# 可选: "mimo" | "deepseek" | "doubao"
 # 优先使用环境变量覆盖，便于在不同机器/环境切换
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek").strip().lower()
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mimo").strip().lower()
 
 if LLM_PROVIDER == "doubao":
     # 豆包（火山方舟 Ark）配置
     API_KEY = os.environ.get("DOUBAO_API_KEY", os.environ.get("ARK_API_KEY", ""))
     BASE_URL = os.environ.get("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
     DEFAULT_LLM_MODEL = os.environ.get("DOUBAO_MODEL", "doubao-seed-2-0-pro-260215")
+elif LLM_PROVIDER == "mimo":
+    # MiMo（小米大模型）配置
+    API_KEY = os.environ.get("MIMO_API_KEY", os.environ.get("API_KEY", ""))
+    BASE_URL = os.environ.get("MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1")
+    DEFAULT_LLM_MODEL = os.environ.get("MIMO_MODEL", "MiMo-V2.5-Pro")
 else:
     # DeepSeek 配置
     API_KEY = os.environ.get("DEEPSEEK_API_KEY", os.environ.get("API_KEY", ""))

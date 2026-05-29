@@ -13,7 +13,7 @@
 4. 通过审计规则检测结构贴合、表达差异、连贯性、文风、AI 痕迹等问题。
 5. 在审计通过后写入输出章节，并维护长期故事上下文。
 
-主入口是 `app.py`，单章处理主链路在 `chapter_processor.py`。
+主入口是 `workflow/cli.py`，单章处理主链路在 `chapter_processor.py`。
 
 ## 主流程
 
@@ -90,7 +90,7 @@ python -m pytest tests/ -v
 
 | 文件 | 职责 |
 | --- | --- |
-| `app.py` | 命令行入口，解析章节范围并批量调用处理流程 |
+| `workflow/cli.py` | 工作流命令行入口，解析章节范围并批量调用处理流程 |
 | `chapter_processor.py` | 单章处理编排：读参考章、生成、审计、落盘、写 runtime |
 | `ai_handler.py` | 兼容入口（转发到 `llm/` 包）；实现见 `llm/client.py`、`llm/chapter_generate.py` 等 |
 | `audit_pipeline.py` | 兼容入口（转发到 `audit/` 包）；实现见 `audit/pipeline.py` 等 |
@@ -131,10 +131,10 @@ python split_novel.py path/to/novel.txt -o chapters_out
 ## 同结构改编主流程
 
 ```bash
-python app.py --input_dir input_chapters --output_dir output_chapters --start_chapter 1 --end_chapter 10
+python -m workflow.cli run --input_dir input_chapters --output_dir output_chapters --start 1 --end 10
 ```
 
-常用：`--chapter N`、`--length 3000`、`--no_strict_structure_adaptation`（实验模式）、`--force_reanalyze`（忽略缓存重分析）、`--analyze_only`（只生成分析工件）、`--no_entity_rewrite`（关闭实体改写）、`--entity_preview`（只扫描实体、打印映射表）、`--no_entity_prescan`（关闭正式运行前实体预扫描）、`--sleep N`（章节间等待秒数，默认 5）。
+常用：`--chapter N`、`--length 3000`、`--no_strict_source_plot`（实验模式）、`--no_entity_rewrite`（关闭实体改写）、`--only <task>`（仅执行指定任务）、`--resume`（恢复中断的工作流）。
 
 ### 实体改写（默认开启）
 
@@ -149,21 +149,18 @@ python app.py --input_dir input_chapters --output_dir output_chapters --start_ch
 关闭方式（仍想沿用原作实体名时）：
 
 ```bash
-python app.py --no_entity_rewrite
+python -m workflow.cli run --no_entity_rewrite
 # 或在 .env 中设置
 ENTITY_REWRITE=0
 ```
 
 如发现自动扫描漏掉某个角色，可手编 `runtime/global_entity_map.json` 的 `characters` 字段直接补条目，后续章节自动生效。
 
-**推荐工作流**：先用 `--entity_preview` 预演，确认映射表无误后再正式跑：
+**推荐工作流**：直接运行工作流，实体映射会自动生成和维护：
 
 ```bash
-# 第一步：预演 — 只扫描实体、打印全局映射表，不生成正文
-python app.py --start_chapter 1 --end_chapter 10 --entity_preview
-# 检查终端输出的映射表，如有问题直接编辑 runtime/global_entity_map.json
-# 第二步：正式跑
-python app.py --start_chapter 1 --end_chapter 10
+# 运行工作流
+python -m workflow.cli run --start 1 --end 10
 ```
 
 全局映射表带有来源章节标记（`first_seen_chapter`），方便反查某个新名是哪一章首次引入的。
@@ -171,7 +168,7 @@ python app.py --start_chapter 1 --end_chapter 10
 只分析参考章、生成 runtime 工件但不写正文：
 
 ```bash
-python app.py --input_dir input_chapters --chapter 1 --analyze_only
+python -m workflow.cli run --input_dir input_chapters --chapter 1 --only style_analysis
 ```
 
 ## 辅助脚本
@@ -187,7 +184,10 @@ python rename_chapters.py chapters_out
 
 ## 配置说明
 
-- 提供商与模型：`config.py` + `.env`（`LLM_PROVIDER`、`DEEPSEEK_*`、`DOUBAO_*` 等）
+- 提供商与模型：`config.py` + `.env`（`LLM_PROVIDER`、`MIMO_*`、`DEEPSEEK_*`、`DOUBAO_*` 等）
+- **MiMo（默认）**：小米大模型，使用 OpenAI 兼容接口。Token Plan 的 Base URL 为 `https://token-plan-cn.xiaomimimo.com/v1`，模型为 `MiMo-V2.5-Pro`。
+- **DeepSeek**：设置 `LLM_PROVIDER=deepseek`。
+- **豆包**：设置 `LLM_PROVIDER=doubao`，使用火山方舟 Ark 接口。
 - 审计门槛：见 `audit_rules.json`，当前总分阈值默认 `68`；规则审计与结构贴合审计同时空响应时不会正式落盘。
 - 参考相似度与结构骨架贴合：见 `audit_rules.json` 中 `reference_similarity`、`plot_fidelity_min_score`；也可用 `.env` 中 `REFERENCE_SIMILARITY_*`、`PLOT_FIDELITY_MIN_SCORE` 设置默认值。
 - LLM 调试日志默认关闭；需要排查接口返回时可在 `.env` 中设置 `DEBUG_LLM_LOG=1`。

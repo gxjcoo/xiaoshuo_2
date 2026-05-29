@@ -50,7 +50,7 @@ def _debug_log_request(model, messages, temperature, max_tokens, response_format
 
 
 def _looks_like_meta_reasoning(text):
-    """识别“用户现在需要…”这类元推理开头，避免污染下游审计/生成流程。"""
+    """识别"用户现在需要…"这类元推理开头，避免污染下游审计/生成流程。"""
     if not isinstance(text, str):
         return False
     s = text.strip()
@@ -202,7 +202,7 @@ def _effective_response_format(response_format):
 
 
 def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, response_format=None, task_label=""):
-    """调用 LLM 的通用函数（DeepSeek / 豆包 Ark）。"""
+    """调用 LLM 的通用函数（MiMo / DeepSeek / 豆包 Ark）。"""
     response_format = _effective_response_format(response_format)
     timeout = httpx.Timeout(
         connect=API_HTTP_CONNECT_TIMEOUT,
@@ -262,6 +262,8 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
                         path_label="ark.chat.completions",
                     )
             else:
+                # MiMo 和 DeepSeek 都使用 OpenAI 兼容接口
+                path_label = "mimo.chat.completions" if LLM_PROVIDER == "mimo" else "openai.chat.completions"
                 content = _call_openai_chat_api(
                     messages=messages,
                     model=model,
@@ -269,14 +271,14 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
                     max_tokens=max_tokens,
                     temperature=temperature,
                     response_format=response_format,
-                    path_label="openai.chat.completions",
+                    path_label=path_label,
                 )
 
             if _looks_like_meta_reasoning(content):
                 if DEBUG_LLM_LOG:
                     print("[LLM DEBUG] invalid meta-reasoning response detected, force retry", flush=True)
                     print(f"[LLM DEBUG] meta_preview={_preview_text(content, DEBUG_LLM_PREVIEW_CHARS)}", flush=True)
-                raise RuntimeError("模型返回了元推理文本（如“用户现在需要…”），已判定为无效响应")
+                raise RuntimeError("模型返回了元推理文本（如"用户现在需要…"），已判定为无效响应")
 
             return content
 
