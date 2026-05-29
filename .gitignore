@@ -13,7 +13,6 @@ inkos/
 .env
 
 # 原作 / 参考章目录（用户自备，不入仓库）
-input_chapters/
 /*.txt
 
 # 运行产物
@@ -23,8 +22,24 @@ runtime/
 story_context.json
 pruned_context_archive.json
 all/
+workflow_state.json
+book_profile.json
+single_chapter_output.txt
 
 # 测试 / 日志
 .pytest_cache/
 test_output*.txt
 *.log
+
+# 测试文件
+test_*.py
+test_*
+tests/
+
+# 章节目录（运行时生成）
+chapters/
+
+# 临时文件
+*.tmp
+*.bak
+*.swp

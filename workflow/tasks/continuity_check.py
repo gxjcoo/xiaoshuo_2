@@ -144,7 +144,7 @@ class ContinuityCheckTask(TaskNode):
                 return f.read()
         
         # 尝试从输入目录加载
-        input_dir = "input_chapters"
+        input_dir = context.get("chapters_dir", "chapters")
         prev_file = os.path.join(input_dir, f"{current_chapter - 1}.md")
         
         if os.path.exists(prev_file):

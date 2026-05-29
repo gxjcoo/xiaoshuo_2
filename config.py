@@ -32,16 +32,25 @@ if LLM_PROVIDER == "doubao":
     API_KEY = os.environ.get("DOUBAO_API_KEY", os.environ.get("ARK_API_KEY", ""))
     BASE_URL = os.environ.get("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
     DEFAULT_LLM_MODEL = os.environ.get("DOUBAO_MODEL", "doubao-seed-2-0-pro-260215")
+    # 豆包模型限制（根据实际模型调整）
+    MAX_CONTEXT_TOKENS = int(os.environ.get("MAX_CONTEXT_TOKENS", "131072"))  # 128K 上下文
+    MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "4096"))  # 4K 输出
 elif LLM_PROVIDER == "mimo":
     # MiMo（小米大模型）配置
     API_KEY = os.environ.get("MIMO_API_KEY", os.environ.get("API_KEY", ""))
     BASE_URL = os.environ.get("MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1")
-    DEFAULT_LLM_MODEL = os.environ.get("MIMO_MODEL", "MiMo-V2.5-Pro")
+    DEFAULT_LLM_MODEL = os.environ.get("MIMO_MODEL", "mimo-v2.5-pro")
+    # MiMo 模型限制
+    MAX_CONTEXT_TOKENS = int(os.environ.get("MAX_CONTEXT_TOKENS", "1048576"))  # 1M 上下文
+    MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "131072"))  # 128K 输出
 else:
     # DeepSeek 配置
     API_KEY = os.environ.get("DEEPSEEK_API_KEY", os.environ.get("API_KEY", ""))
     BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
     DEFAULT_LLM_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+    # DeepSeek 模型限制
+    MAX_CONTEXT_TOKENS = int(os.environ.get("MAX_CONTEXT_TOKENS", "131072"))  # 128K 上下文
+    MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "8192"))  # 8K 输出
 
 # HTTP 超时（秒）。未设置时 httpx 可能长时间无响应，看起来像「卡住」。
 # 生成长章节若超时，可调大环境变量 API_HTTP_READ_TIMEOUT，或在 config 里改默认值。
@@ -51,7 +60,7 @@ API_HTTP_READ_TIMEOUT = float(os.environ.get("API_HTTP_READ_TIMEOUT", "300"))
 # 文件路径
 CONTEXT_FILE = 'story_context.json'
 PRUNED_ARCHIVE_FILE = 'pruned_context_archive.json'
-DEFAULT_INPUT_DIR = 'input_chapters'  # 默认参考章目录（用户自备 numbered .md）
+DEFAULT_INPUT_DIR = 'chapters'  # 默认参考章目录（用户自备 numbered .md）
 DEFAULT_OUTPUT_DIR = 'output_chapters'  # 默认生成输出目录
 
 RUNTIME_DIR = 'runtime'

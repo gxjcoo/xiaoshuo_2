@@ -65,9 +65,13 @@ def build_chapter_dag(
     if enable_decompose:
         if use_advanced_decompose:
             dag.add_node(DecomposeAdvancedTask())
+            # 覆盖 inject_profile 的依赖
+            inject_node = InjectProfileTask()
+            inject_node.deps = ["decompose_advanced"]
+            dag.add_node(inject_node)
         else:
             dag.add_node(DecomposeBookTask())
-        dag.add_node(InjectProfileTask())
+            dag.add_node(InjectProfileTask())
         # 手动添加 inject_profile 到 chapter_plan 的依赖
         dag.add_edge("inject_profile", "chapter_plan")
     
@@ -129,9 +133,13 @@ def build_full_dag(
     if enable_decompose:
         if use_advanced_decompose:
             dag.add_node(DecomposeAdvancedTask())
+            # 覆盖 inject_profile 的依赖
+            inject_node = InjectProfileTask()
+            inject_node.deps = ["decompose_advanced"]
+            dag.add_node(inject_node)
         else:
             dag.add_node(DecomposeBookTask())
-        dag.add_node(InjectProfileTask())
+            dag.add_node(InjectProfileTask())
     
     # 添加每章的处理节点
     for chapter_num in range(start_chapter, end_chapter + 1):
@@ -160,67 +168,91 @@ def _create_chapter_nodes(
     enable_style_consistency: bool = True
 ) -> list:
     """为单章创建所有处理节点"""
+    
+    # 全局任务 ID 列表（不添加章节号）
+    global_task_ids = {"split_novel", "decompose_book", "decompose_advanced", "inject_profile"}
+    
+    class ChapterTaskWrapper:
+        """包装任务节点，添加章节号到 ID"""
+        def __init__(self, task, chapter_num):
+            self.task = task
+            self.chapter_num = chapter_num
+            self._id = f"{task.id}_ch{chapter_num}"
+            self._chapter_number = chapter_num
+        
+        @property
+        def id(self):
+            return self._id
+        
+        @property
+        def name(self):
+            return f"{self.task.name} (第{self.chapter_num}章)"
+        
+        @property
+        def deps(self):
+            # 全局依赖保持原样，章节依赖添加章节号
+            result = []
+            for dep in self.task.deps:
+                if dep in global_task_ids:
+                    result.append(dep)
+                else:
+                    result.append(f"{dep}_ch{self.chapter_num}")
+            return result
+        
+        def execute(self, context):
+            # 设置章节号到上下文
+            context["chapter_number"] = self.chapter_num
+            return self.task.execute(context)
+        
+        def validate_inputs(self, context):
+            context["chapter_number"] = self.chapter_num
+            return self.task.validate_inputs(context)
+        
+        def get_required_keys(self):
+            return self.task.get_required_keys()
+        
+        def get_output_keys(self):
+            return self.task.get_output_keys()
+    
     nodes = []
     
     # 风格分析节点
-    style_node = StyleAnalysisTask()
-    style_node._chapter_number = chapter_number
-    nodes.append(style_node)
+    nodes.append(ChapterTaskWrapper(StyleAnalysisTask(), chapter_number))
     
     # 骨架抽取节点
-    outline_node = OutlineExtractTask()
-    outline_node._chapter_number = chapter_number
-    nodes.append(outline_node)
+    nodes.append(ChapterTaskWrapper(OutlineExtractTask(), chapter_number))
     
     # 实体改写节点（可选）
     if enable_entity_rewrite:
-        entity_node = EntityRewriteTask()
-        entity_node._chapter_number = chapter_number
-        nodes.append(entity_node)
+        nodes.append(ChapterTaskWrapper(EntityRewriteTask(), chapter_number))
     
     # 意图规划节点
-    plan_node = ChapterPlanTask()
-    plan_node._chapter_number = chapter_number
-    nodes.append(plan_node)
+    nodes.append(ChapterTaskWrapper(ChapterPlanTask(), chapter_number))
     
     # 正文生成节点
-    generate_node = ContentGenerateTask()
-    generate_node._chapter_number = chapter_number
-    nodes.append(generate_node)
+    nodes.append(ChapterTaskWrapper(ContentGenerateTask(), chapter_number))
     
     # 审计修订节点
-    audit_node = AuditReviseTask()
-    audit_node._chapter_number = chapter_number
-    nodes.append(audit_node)
+    nodes.append(ChapterTaskWrapper(AuditReviseTask(), chapter_number))
     
     # 连贯性检查节点（可选）
     if enable_continuity_check:
-        continuity_node = ContinuityCheckTask()
-        continuity_node._chapter_number = chapter_number
-        nodes.append(continuity_node)
+        nodes.append(ChapterTaskWrapper(ContinuityCheckTask(), chapter_number))
     
     # 伏笔管理节点（可选）
     if enable_foreshadow_manager:
-        foreshadow_node = ForeshadowManagerTask()
-        foreshadow_node._chapter_number = chapter_number
-        nodes.append(foreshadow_node)
+        nodes.append(ChapterTaskWrapper(ForeshadowManagerTask(), chapter_number))
     
     # 风格一致性验证节点（可选）
     if enable_style_consistency:
-        style_consistency_node = StyleConsistencyTask()
-        style_consistency_node._chapter_number = chapter_number
-        nodes.append(style_consistency_node)
+        nodes.append(ChapterTaskWrapper(StyleConsistencyTask(), chapter_number))
     
     # 写入输出节点
-    output_node = WriteOutputTask()
-    output_node._chapter_number = chapter_number
-    nodes.append(output_node)
+    nodes.append(ChapterTaskWrapper(WriteOutputTask(), chapter_number))
     
     # 更新上下文节点（可选）
     if enable_context_update:
-        context_node = UpdateContextTask()
-        context_node._chapter_number = chapter_number
-        nodes.append(context_node)
+        nodes.append(ChapterTaskWrapper(UpdateContextTask(), chapter_number))
     
     return nodes
 

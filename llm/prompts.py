@@ -135,8 +135,15 @@ def _slim_context_for_generation(current_context, writing_chapter_number=None):
 
 def _chapter_completion_max_tokens(target_length):
     """中文正文约 1.5–2 token/字；target_length 为期望字数时不可把 max_tokens 当字数用。"""
+    from config import MAX_OUTPUT_TOKENS
+    
     try:
         n = int(target_length)
     except Exception:
         n = 3000
-    return max(2048, int(n * 2.2) + 512)
+    
+    # 计算所需的token数
+    calculated_tokens = max(2048, int(n * 2.2) + 512)
+    
+    # 确保不超过模型的最大输出限制
+    return min(calculated_tokens, MAX_OUTPUT_TOKENS)

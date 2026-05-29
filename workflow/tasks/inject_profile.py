@@ -16,6 +16,10 @@ from ..base import TaskNode
 class InjectProfileTask(TaskNode):
     """将拆书结果注入到故事上下文"""
 
+    def __init__(self):
+        super().__init__()
+        self.deps = ["decompose_book"]
+
     @property
     def id(self) -> str:
         return "inject_profile"
@@ -23,10 +27,6 @@ class InjectProfileTask(TaskNode):
     @property
     def name(self) -> str:
         return "注入设定"
-
-    @property
-    def deps(self) -> list:
-        return ["decompose_book"]
 
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """

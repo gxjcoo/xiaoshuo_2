@@ -44,7 +44,7 @@ class StyleAnalysisTask(TaskNode):
         
         if not reference_text:
             # 尝试从文件加载
-            chapters_dir = context.get("chapters_dir", "input_chapters")
+            chapters_dir = context.get("chapters_dir", "chapters")
             ref_file = os.path.join(chapters_dir, f"{chapter_number}.md")
             if os.path.exists(ref_file):
                 with open(ref_file, "r", encoding="utf-8") as f:

@@ -27,7 +27,12 @@ class TaskNode(ABC):
     @property
     def deps(self) -> List[str]:
         """依赖的任务 ID 列表，子类可覆盖"""
-        return []
+        return getattr(self, '_deps_override', [])
+
+    @deps.setter
+    def deps(self, value: List[str]):
+        """允许运行时覆盖依赖"""
+        self._deps_override = value
 
     @abstractmethod
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:

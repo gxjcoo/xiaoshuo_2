@@ -60,7 +60,7 @@ class EntityRewriteTask(TaskNode):
         
         if not reference_text:
             # 尝试从文件加载
-            chapters_dir = context.get("chapters_dir", "input_chapters")
+            chapters_dir = context.get("chapters_dir", "chapters")
             ref_file = os.path.join(chapters_dir, f"{chapter_number}.md")
             if os.path.exists(ref_file):
                 with open(ref_file, "r", encoding="utf-8") as f:
@@ -73,7 +73,7 @@ class EntityRewriteTask(TaskNode):
             }
         
         # 检查缓存
-        cached_map = load_cached_entity_map(chapter_number, runtime_dir)
+        cached_map = load_cached_entity_map(chapter_number)
         if cached_map:
             print(f"  使用缓存的实体映射: chapter {chapter_number}")
             entity_map = cached_map
@@ -83,7 +83,7 @@ class EntityRewriteTask(TaskNode):
             
             if entity_map:
                 # 保存章节映射
-                save_entity_map(entity_map, chapter_number, runtime_dir)
+                save_entity_map(chapter_number, entity_map)
                 
                 # 合并到全局映射
                 global_map = load_global_entity_map()

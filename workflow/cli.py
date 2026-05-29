@@ -72,7 +72,7 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--chapter", type=int, help="处理单个章节")
     run_parser.add_argument("--start", type=int, help="起始章节")
     run_parser.add_argument("--end", type=int, help="结束章节")
-    run_parser.add_argument("--input_dir", default="input_chapters", help="输入目录")
+    run_parser.add_argument("--input_dir", default="chapters", help="输入目录")
     run_parser.add_argument("--output_dir", default="output_chapters", help="输出目录")
     run_parser.add_argument("--novel", help="小说文件路径（用于切章）")
     run_parser.add_argument("--no_strict_source_plot", action="store_true", help="关闭严格结构适配")
@@ -90,7 +90,7 @@ def create_parser() -> argparse.ArgumentParser:
     
     # decompose 命令
     decompose_parser = subparsers.add_parser("decompose", help="拆书分析")
-    decompose_parser.add_argument("--input_dir", default="input_chapters", help="输入目录")
+    decompose_parser.add_argument("--input_dir", default="chapters", help="输入目录")
     decompose_parser.add_argument("--output", default="book_profile.json", help="输出文件")
     decompose_parser.add_argument("--novel", help="小说文件路径")
     decompose_parser.add_argument("--advanced", action="store_true", help="使用高级拆书模式（适用于长篇小说）")

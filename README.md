@@ -1,7 +1,7 @@
 # 小说章节同结构改编工具（逻辑骨架）
 
 用于：长篇 `txt` 切章、对照参考章调用 LLM 做同结构改编、审计与修订闭环。  
-**本仓库分支不含任何具体小说正文**，剧情与设定由你本地放入 `input_chapters/` 等目录。
+**本仓库分支不含任何具体小说正文**，剧情与设定由你本地放入 `chapters/` 等目录。
 
 ## 项目概览
 
@@ -18,7 +18,7 @@
 ## 主流程
 
 ```text
-input_chapters/N.md
+chapters/N.md
         |
         v
 chapter_processor.process_chapter()
@@ -37,7 +37,7 @@ output_chapters/N.md
         +--> story_context.json
 ```
 
-默认启用严格结构适配模式：结构功能以 `input_chapters/` 中的参考章抽取出的结构骨架为准，上一章衔接优先使用 input 原作上一章。如需实验性自由改编，可使用 `--no_strict_structure_adaptation`（旧参数 `--no_strict_plot_fidelity`、`--no_strict_source_plot` 仍兼容）。
+默认启用严格结构适配模式：结构功能以 `chapters/` 中的参考章抽取出的结构骨架为准，上一章衔接优先使用 input 原作上一章。如需实验性自由改编，可使用 `--no_strict_structure_adaptation`（旧参数 `--no_strict_plot_fidelity`、`--no_strict_source_plot` 仍兼容）。
 
 ---
 
@@ -80,7 +80,7 @@ python -m pytest tests/ -v
 
 | 路径 | 说明 |
 | --- | --- |
-| `input_chapters/` | 参考章：`1.md`、`2.md` …（自备） |
+| `chapters/` | 参考章：`1.md`、`2.md` …（自备或由切章生成） |
 | `output_chapters/` | 生成输出（默认） |
 | `chapters_out/` | `split_novel.py` 默认切章输出 |
 | `current_focus.md` | 近几章临时焦点（可选；默认可不填） |
@@ -131,7 +131,7 @@ python split_novel.py path/to/novel.txt -o chapters_out
 ## 同结构改编主流程
 
 ```bash
-python -m workflow.cli run --input_dir input_chapters --output_dir output_chapters --start 1 --end 10
+python -m workflow.cli run --input_dir chapters --output_dir output_chapters --start 1 --end 10
 ```
 
 常用：`--chapter N`、`--length 3000`、`--no_strict_source_plot`（实验模式）、`--no_entity_rewrite`（关闭实体改写）、`--only <task>`（仅执行指定任务）、`--resume`（恢复中断的工作流）。
@@ -168,13 +168,13 @@ python -m workflow.cli run --start 1 --end 10
 只分析参考章、生成 runtime 工件但不写正文：
 
 ```bash
-python -m workflow.cli run --input_dir input_chapters --chapter 1 --only style_analysis
+python -m workflow.cli run --input_dir chapters --chapter 1 --only style_analysis
 ```
 
 ## 辅助脚本
 
 ```bash
-python combine_chapters.py input_chapters -o combined.md
+python combine_chapters.py chapters -o combined.md
 python rename_chapters.py chapters_out
 ```
 
@@ -185,7 +185,7 @@ python rename_chapters.py chapters_out
 ## 配置说明
 
 - 提供商与模型：`config.py` + `.env`（`LLM_PROVIDER`、`MIMO_*`、`DEEPSEEK_*`、`DOUBAO_*` 等）
-- **MiMo（默认）**：小米大模型，使用 OpenAI 兼容接口。Token Plan 的 Base URL 为 `https://token-plan-cn.xiaomimimo.com/v1`，模型为 `MiMo-V2.5-Pro`。
+- **MiMo（默认）**：小米大模型，使用 OpenAI 兼容接口。Token Plan 的 Base URL 为 `https://token-plan-cn.xiaomimimo.com/v1`，模型为 `mimo-v2.5-pro`。
 - **DeepSeek**：设置 `LLM_PROVIDER=deepseek`。
 - **豆包**：设置 `LLM_PROVIDER=doubao`，使用火山方舟 Ark 接口。
 - 审计门槛：见 `audit_rules.json`，当前总分阈值默认 `68`；规则审计与结构贴合审计同时空响应时不会正式落盘。

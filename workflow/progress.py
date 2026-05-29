@@ -22,7 +22,21 @@ class ProgressTracker:
     """进度追踪器，提供实时进度显示和最终报告"""
 
     def __init__(self):
-        self.console = Console() if RICH_AVAILABLE else None
+        # Windows 下强制使用 UTF-8 编码，避免 GBK 编码错误
+        if RICH_AVAILABLE:
+            import sys
+            import os
+            if sys.platform == 'win32':
+                # 设置标准输出编码为 UTF-8
+                if hasattr(sys.stdout, 'reconfigure'):
+                    sys.stdout.reconfigure(encoding='utf-8')
+                if hasattr(sys.stderr, 'reconfigure'):
+                    sys.stderr.reconfigure(encoding='utf-8')
+                # 设置环境变量
+                os.environ['PYTHONIOENCODING'] = 'utf-8'
+            self.console = Console(force_terminal=True)
+        else:
+            self.console = None
         self.progress: Optional[Any] = None
         self.task_ids: Dict[str, Any] = {}
         self.start_time: float = 0
@@ -92,7 +106,7 @@ class ProgressTracker:
         if task_id in self.task_timings:
             duration = time.time() - self.task_timings[task_id]
         
-        status = "✓" if success else "✗"
+        status = "[OK]" if success else "[FAIL]"
         
         if not RICH_AVAILABLE:
             print(f"  [{task_id}] {status} 完成 ({duration:.1f}s) {message}")

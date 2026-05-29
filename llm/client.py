@@ -14,6 +14,7 @@ from config import (
     DEBUG_LLM_LOG,
     DEBUG_LLM_PREVIEW_CHARS,
     DOUBAO_USE_RESPONSES_API,
+    MAX_OUTPUT_TOKENS,
 )
 
 
@@ -210,6 +211,10 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
         write=API_HTTP_CONNECT_TIMEOUT,
         pool=API_HTTP_CONNECT_TIMEOUT,
     )
+    
+    # 如果未指定max_tokens，使用配置的默认值
+    if max_tokens is None:
+        max_tokens = MAX_OUTPUT_TOKENS
 
     retries = 3
     delay = 5
@@ -278,7 +283,7 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
                 if DEBUG_LLM_LOG:
                     print("[LLM DEBUG] invalid meta-reasoning response detected, force retry", flush=True)
                     print(f"[LLM DEBUG] meta_preview={_preview_text(content, DEBUG_LLM_PREVIEW_CHARS)}", flush=True)
-                raise RuntimeError("模型返回了元推理文本（如"用户现在需要…"），已判定为无效响应")
+                raise RuntimeError('模型返回了元推理文本（如"用户现在需要…"），已判定为无效响应')
 
             return content
 

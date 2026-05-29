@@ -126,7 +126,7 @@ class StyleConsistencyTask(TaskNode):
         import os
         
         # 从输入目录加载
-        input_dir = "input_chapters"
+        input_dir = context.get("chapters_dir", "chapters")
         ref_file = os.path.join(input_dir, f"{chapter_number}.md")
         
         if os.path.exists(ref_file):
