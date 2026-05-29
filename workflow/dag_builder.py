@@ -150,7 +150,8 @@ def build_full_dag(
             enable_context_update,
             enable_continuity_check,
             enable_foreshadow_manager,
-            enable_style_consistency
+            enable_style_consistency,
+            start_chapter
         )
         
         for node in chapter_nodes:
@@ -165,12 +166,16 @@ def _create_chapter_nodes(
     enable_context_update: bool,
     enable_continuity_check: bool = True,
     enable_foreshadow_manager: bool = True,
-    enable_style_consistency: bool = True
+    enable_style_consistency: bool = True,
+    start_chapter: int = 1
 ) -> list:
     """为单章创建所有处理节点"""
     
     # 全局任务 ID 列表（不添加章节号）
     global_task_ids = {"split_novel", "decompose_book", "decompose_advanced", "inject_profile"}
+    
+    # 需要严格串行执行的任务（依赖前一章的同类型任务）
+    serial_task_ids = {"entity_rewrite", "update_context"}
     
     class ChapterTaskWrapper:
         """包装任务节点，添加章节号到 ID"""
@@ -197,6 +202,11 @@ def _create_chapter_nodes(
                     result.append(dep)
                 else:
                     result.append(f"{dep}_ch{self.chapter_num}")
+            
+            # 对需要串行的任务，添加前章依赖
+            if self.task.id in serial_task_ids and self.chapter_num > start_chapter:
+                result.append(f"{self.task.id}_ch{self.chapter_num - 1}")
+            
             return result
         
         def execute(self, context):
