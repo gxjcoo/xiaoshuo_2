@@ -17,6 +17,7 @@ from .dag_builder import (
 )
 from .tasks.split import SplitNovelTask
 from .tasks.decompose import DecomposeBookTask
+from .tasks.decompose_advanced import DecomposeAdvancedTask
 from .tasks.inject_profile import InjectProfileTask
 from .tasks.style_analysis import StyleAnalysisTask
 from .tasks.outline_extract import OutlineExtractTask
@@ -46,6 +47,9 @@ def create_parser() -> argparse.ArgumentParser:
   
   # 仅拆书分析
   python -m workflow.cli decompose
+  
+  # 高级拆书（适用于长篇小说）
+  python -m workflow.cli decompose --advanced --novel novel.txt
   
   # 单独执行某个步骤
   python -m workflow.cli run --chapter 1 --only style_analysis
@@ -77,6 +81,7 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--no_continuity_check", action="store_true", help="关闭连贯性检查")
     run_parser.add_argument("--no_foreshadow_manager", action="store_true", help="关闭伏笔管理")
     run_parser.add_argument("--no_style_consistency", action="store_true", help="关闭风格一致性验证")
+    run_parser.add_argument("--advanced_decompose", action="store_true", help="使用高级拆书（适用于长篇小说）")
     run_parser.add_argument("--volume_size", type=int, default=20, help="每卷章节数（用于分卷处理）")
     run_parser.add_argument("--length", type=int, default=3000, help="目标字数")
     run_parser.add_argument("--only", help="仅执行指定任务")
@@ -88,6 +93,8 @@ def create_parser() -> argparse.ArgumentParser:
     decompose_parser.add_argument("--input_dir", default="input_chapters", help="输入目录")
     decompose_parser.add_argument("--output", default="book_profile.json", help="输出文件")
     decompose_parser.add_argument("--novel", help="小说文件路径")
+    decompose_parser.add_argument("--advanced", action="store_true", help="使用高级拆书模式（适用于长篇小说）")
+    decompose_parser.add_argument("--novel_length", type=int, default=0, help="小说总字数（用于自动选择策略）")
     
     # resume 命令
     resume_parser = subparsers.add_parser("resume", help="恢复中断的工作流")
@@ -113,15 +120,37 @@ def cmd_run(args: argparse.Namespace):
         start_chapter = args.start
         end_chapter = args.end
     else:
-        print("错误: 请指定 --chapter 或 --start/--end")
-        sys.exit(1)
+        # 自动检测章节范围
+        start_chapter, end_chapter = _auto_detect_chapters(args.input_dir, args.novel)
+        if start_chapter is None:
+            print("错误: 请指定 --chapter 或 --start/--end，或确保输入目录中有章节文件")
+            sys.exit(1)
+        print(f"自动检测到章节范围: {start_chapter} - {end_chapter}")
     
     # 构建 DAG
     enable_decompose = args.novel is not None
+    use_advanced_decompose = args.advanced_decompose
+    
+    # 自动检测是否需要高级拆书
+    if enable_decompose and not use_advanced_decompose:
+        from config import DECOMPOSE_ADVANCED_AUTO, DECOMPOSE_ADVANCED_THRESHOLD
+        if DECOMPOSE_ADVANCED_AUTO and args.novel:
+            # 检查小说文件大小
+            try:
+                file_size = os.path.getsize(args.novel)
+                # 估算字数（中文约2字节/字）
+                estimated_chars = file_size // 2
+                if estimated_chars >= DECOMPOSE_ADVANCED_THRESHOLD:
+                    use_advanced_decompose = True
+                    print(f"自动启用高级拆书模式（估算字数: {estimated_chars:,}）")
+            except:
+                pass
+    
     dag = build_full_dag(
         start_chapter=start_chapter,
         end_chapter=end_chapter,
         enable_decompose=enable_decompose,
+        use_advanced_decompose=use_advanced_decompose,
         enable_entity_rewrite=not args.no_entity_rewrite,
         enable_context_update=not args.no_context_update,
         enable_continuity_check=not args.no_continuity_check,
@@ -140,7 +169,7 @@ def cmd_run(args: argparse.Namespace):
         dag = filtered_dag
     
     # 显示 DAG 结构
-    print_dag_structure()
+    print_dag_structure(enable_decompose, use_advanced_decompose)
     
     # 创建引擎并执行
     engine = WorkflowEngine(dag, state_file=args.state_file)
@@ -155,7 +184,8 @@ def cmd_run(args: argparse.Namespace):
         "strict_source_plot": not args.no_strict_source_plot,
         "entity_rewrite_enabled": not args.no_entity_rewrite,
         "target_length": args.length,
-        "volume_size": args.volume_size
+        "volume_size": args.volume_size,
+        "use_advanced_decompose": use_advanced_decompose
     }
     
     # 执行
@@ -173,10 +203,26 @@ def cmd_decompose(args: argparse.Namespace):
     """执行拆书分析"""
     from .engine import DAG, WorkflowEngine
     
-    # 创建仅包含拆书任务的 DAG
+    # 确定是否使用高级拆书
+    use_advanced = args.advanced
+    
+    # 自动检测
+    if not use_advanced and args.novel_length > 0:
+        from config import DECOMPOSE_ADVANCED_THRESHOLD
+        if args.novel_length >= DECOMPOSE_ADVANCED_THRESHOLD:
+            use_advanced = True
+            print(f"根据小说字数自动启用高级拆书模式")
+    
+    # 创建拆书 DAG
     dag = DAG()
     dag.add_node(SplitNovelTask())
-    dag.add_node(DecomposeBookTask())
+    
+    if use_advanced:
+        dag.add_node(DecomposeAdvancedTask())
+        print("使用高级拆书模式（适用于长篇小说）")
+    else:
+        dag.add_node(DecomposeBookTask())
+        print("使用标准拆书模式")
     
     # 创建引擎
     engine = WorkflowEngine(dag)
@@ -185,7 +231,8 @@ def cmd_decompose(args: argparse.Namespace):
     engine.context = {
         "novel_path": args.novel,
         "chapters_dir": args.input_dir,
-        "decompose_output": args.output
+        "decompose_output": args.output,
+        "novel_length": args.novel_length
     }
     
     # 执行
@@ -219,8 +266,8 @@ def cmd_resume(args: argparse.Namespace):
     
     # 从 tasks 模块导入所有节点类型
     from .tasks import (
-        SplitNovelTask, DecomposeBookTask, InjectProfileTask, StyleAnalysisTask,
-        OutlineExtractTask, EntityRewriteTask, ChapterPlanTask,
+        SplitNovelTask, DecomposeBookTask, DecomposeAdvancedTask, InjectProfileTask, 
+        StyleAnalysisTask, OutlineExtractTask, EntityRewriteTask, ChapterPlanTask,
         ContentGenerateTask, AuditReviseTask, ContinuityCheckTask,
         ForeshadowManagerTask, StyleConsistencyTask, WriteOutputTask,
         UpdateContextTask
@@ -230,6 +277,7 @@ def cmd_resume(args: argparse.Namespace):
     task_classes = {
         "split_novel": SplitNovelTask,
         "decompose_book": DecomposeBookTask,
+        "decompose_advanced": DecomposeAdvancedTask,
         "inject_profile": InjectProfileTask,
         "style_analysis": StyleAnalysisTask,
         "outline_extract": OutlineExtractTask,
@@ -304,6 +352,7 @@ def cmd_list(args: argparse.Namespace):
     tasks = [
         ("split_novel", "切章", "将小说文本分割为章节"),
         ("decompose_book", "拆书", "提取世界观、人物、设定等"),
+        ("decompose_advanced", "高级拆书", "适用于长篇小说（50万字以上）"),
         ("inject_profile", "设定注入", "将拆书结果注入到故事上下文"),
         ("style_analysis", "风格分析", "分析写作风格"),
         ("outline_extract", "骨架抽取", "提取结构化骨架"),
@@ -324,6 +373,48 @@ def cmd_list(args: argparse.Namespace):
     print("-" * 50)
     print("\nDAG 依赖关系:")
     print_dag_structure()
+
+
+def _auto_detect_chapters(input_dir: str, novel_path: Optional[str] = None) -> tuple:
+    """
+    自动检测章节范围
+    
+    Args:
+        input_dir: 输入目录
+        novel_path: 小说文件路径（如果有）
+    
+    Returns:
+        (start_chapter, end_chapter) 或 (None, None) 如果未找到章节
+    """
+    import re
+    
+    # 如果指定了小说文件，先切章
+    if novel_path and os.path.exists(novel_path):
+        print(f"检测到小说文件: {novel_path}")
+        print("请先运行切章命令: python -m workflow.cli run --novel <file> --chapter 1")
+        return None, None
+    
+    # 扫描输入目录
+    if not os.path.exists(input_dir):
+        print(f"输入目录不存在: {input_dir}")
+        return None, None
+    
+    # 查找章节文件（格式：0001_chapter.md 或 chapter_0001.md）
+    chapter_files = []
+    for f in os.listdir(input_dir):
+        if f.endswith('.md'):
+            # 尝试提取章节号
+            match = re.search(r'(\d+)', f)
+            if match:
+                chapter_num = int(match.group(1))
+                chapter_files.append(chapter_num)
+    
+    if not chapter_files:
+        print(f"在 {input_dir} 中未找到章节文件")
+        return None, None
+    
+    chapter_files.sort()
+    return chapter_files[0], chapter_files[-1]
 
 
 def _get_upstream_nodes(dag: DAG, node_id: str) -> set:

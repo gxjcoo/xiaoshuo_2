@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from .engine import DAG
 from .tasks.split import SplitNovelTask
 from .tasks.decompose import DecomposeBookTask
+from .tasks.decompose_advanced import DecomposeAdvancedTask
 from .tasks.inject_profile import InjectProfileTask
 from .tasks.style_analysis import StyleAnalysisTask
 from .tasks.outline_extract import OutlineExtractTask
@@ -26,6 +27,7 @@ from .tasks.update_context import UpdateContextTask
 def build_chapter_dag(
     chapter_number: int,
     enable_decompose: bool = False,
+    use_advanced_decompose: bool = False,
     enable_entity_rewrite: bool = True,
     enable_context_update: bool = True,
     enable_continuity_check: bool = True,
@@ -38,6 +40,7 @@ def build_chapter_dag(
     Args:
         chapter_number: 章节号
         enable_decompose: 是否包含拆书任务
+        use_advanced_decompose: 是否使用高级拆书（适用于长篇小说）
         enable_entity_rewrite: 是否启用实体改写
         enable_context_update: 是否更新上下文
         enable_continuity_check: 是否启用连贯性检查
@@ -60,8 +63,13 @@ def build_chapter_dag(
     
     # 可选节点
     if enable_decompose:
-        dag.add_node(DecomposeBookTask())
+        if use_advanced_decompose:
+            dag.add_node(DecomposeAdvancedTask())
+        else:
+            dag.add_node(DecomposeBookTask())
         dag.add_node(InjectProfileTask())
+        # 手动添加 inject_profile 到 chapter_plan 的依赖
+        dag.add_edge("inject_profile", "chapter_plan")
     
     if enable_entity_rewrite:
         dag.add_node(EntityRewriteTask())
@@ -86,6 +94,7 @@ def build_full_dag(
     start_chapter: int,
     end_chapter: int,
     enable_decompose: bool = True,
+    use_advanced_decompose: bool = False,
     enable_entity_rewrite: bool = True,
     enable_context_update: bool = True,
     enable_continuity_check: bool = True,
@@ -100,6 +109,7 @@ def build_full_dag(
         start_chapter: 起始章节
         end_chapter: 结束章节
         enable_decompose: 是否包含拆书任务
+        use_advanced_decompose: 是否使用高级拆书（适用于长篇小说）
         enable_entity_rewrite: 是否启用实体改写
         enable_context_update: 是否更新上下文
         enable_continuity_check: 是否启用连贯性检查
@@ -117,7 +127,10 @@ def build_full_dag(
     
     # 拆书和设定注入节点
     if enable_decompose:
-        dag.add_node(DecomposeBookTask())
+        if use_advanced_decompose:
+            dag.add_node(DecomposeAdvancedTask())
+        else:
+            dag.add_node(DecomposeBookTask())
         dag.add_node(InjectProfileTask())
     
     # 添加每章的处理节点
@@ -212,17 +225,19 @@ def _create_chapter_nodes(
     return nodes
 
 
-def get_dag_description() -> Dict[str, List[str]]:
+def get_dag_description(enable_decompose: bool = True, use_advanced_decompose: bool = False) -> Dict[str, List[str]]:
     """
     获取 DAG 的人类可读描述
     
+    Args:
+        enable_decompose: 是否启用拆书功能
+        use_advanced_decompose: 是否使用高级拆书
+        
     Returns:
         字典，键为节点 ID，值为依赖列表
     """
-    return {
+    description = {
         "split_novel": [],
-        "decompose_book": ["split_novel"],
-        "inject_profile": ["decompose_book"],
         "style_analysis": ["split_novel"],
         "outline_extract": ["split_novel"],
         "entity_rewrite": ["split_novel"],
@@ -235,11 +250,23 @@ def get_dag_description() -> Dict[str, List[str]]:
         "write_output": ["continuity_check", "foreshadow_manager", "style_consistency"],
         "update_context": ["write_output"]
     }
+    
+    # 如果启用拆书，添加相关节点和依赖
+    if enable_decompose:
+        if use_advanced_decompose:
+            description["decompose_advanced"] = ["split_novel"]
+            description["inject_profile"] = ["decompose_advanced"]
+        else:
+            description["decompose_book"] = ["split_novel"]
+            description["inject_profile"] = ["decompose_book"]
+        description["chapter_plan"].append("inject_profile")
+    
+    return description
 
 
-def print_dag_structure():
+def print_dag_structure(enable_decompose: bool = True, use_advanced_decompose: bool = False):
     """打印 DAG 结构"""
-    description = get_dag_description()
+    description = get_dag_description(enable_decompose, use_advanced_decompose)
     
     print("\n工作流 DAG 结构:")
     print("-" * 50)

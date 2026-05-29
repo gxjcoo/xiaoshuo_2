@@ -21,7 +21,11 @@ class ChapterPlanTask(TaskNode):
 
     @property
     def deps(self) -> list:
-        return ["style_analysis", "outline_extract", "entity_rewrite"]
+        # 如果 inject_profile 存在，则依赖它
+        # 这样可以支持有拆书和无拆书两种模式
+        base_deps = ["style_analysis", "outline_extract", "entity_rewrite"]
+        # inject_profile 是可选依赖，在 DAG 构建时动态添加
+        return base_deps
 
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
