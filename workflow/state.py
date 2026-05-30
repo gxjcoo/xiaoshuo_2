@@ -2,6 +2,8 @@
 StateStore - 工作流状态持久化管理
 
 负责保存和恢复工作流执行状态，支持中断后继续执行
+
+优化：任务输出存储到独立文件，状态文件只保留元数据，避免文件膨胀
 """
 
 import json
@@ -14,22 +16,30 @@ from typing import Any, Dict, Optional
 class StateStore:
     """工作流状态存储管理器"""
 
-    def __init__(self, state_file: str = "workflow_state.json"):
+    def __init__(self, state_file: str = "workflow_state.json", output_dir: str = None):
         """
         初始化状态存储
         
         Args:
             state_file: 状态文件路径
+            output_dir: 任务输出存储目录（默认为 state_file 同级的 task_outputs 目录）
         """
         self.state_file = state_file
         self.state: Dict[str, Any] = {}
+        
+        # 任务输出存储目录
+        if output_dir is None:
+            base_dir = os.path.dirname(os.path.abspath(state_file))
+            output_dir = os.path.join(base_dir, "task_outputs")
+        self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def create_new_run(self, dag_definition: Dict[str, Any]) -> str:
         """
         创建新的工作流运行
         
         Args:
-            dag_definition: DAG 定义数据
+            dag_definition: DAG 定义数据（不再存入状态文件，每次运行时重建）
             
         Returns:
             run_id: 运行唯一标识
@@ -40,7 +50,7 @@ class StateStore:
             "status": "running",
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
-            "dag": dag_definition,
+            "dag_node_count": len(dag_definition.get("nodes", {})),
             "tasks": {},
             "context": {}
         }
@@ -79,7 +89,7 @@ class StateStore:
         Args:
             task_id: 任务 ID
             status: 状态 (pending/running/completed/failed/skipped)
-            outputs: 任务输出
+            outputs: 任务输出（存到独立文件，不放入状态文件）
             error: 错误信息
         """
         if task_id not in self.state.get("tasks", {}):
@@ -88,7 +98,7 @@ class StateStore:
                 "started_at": None,
                 "completed_at": None,
                 "duration_seconds": 0,
-                "outputs": {},
+                "has_outputs": False,
                 "error": None
             }
         
@@ -105,8 +115,10 @@ class StateStore:
                 end = datetime.fromisoformat(task_state["completed_at"])
                 task_state["duration_seconds"] = (end - start).total_seconds()
         
+        # 任务输出存储到独立文件，避免状态文件膨胀
         if outputs:
-            task_state["outputs"] = outputs
+            self._save_task_outputs(task_id, outputs)
+            task_state["has_outputs"] = True
         if error:
             task_state["error"] = error
         
@@ -127,7 +139,12 @@ class StateStore:
         return self.state.get("tasks", {}).get(task_id, {}).get("status", "pending")
 
     def get_task_outputs(self, task_id: str) -> Dict[str, Any]:
-        """获取任务输出"""
+        """获取任务输出（从独立文件加载）"""
+        # 优先从独立文件加载
+        outputs = self._load_task_outputs(task_id)
+        if outputs:
+            return outputs
+        # 兼容旧格式：如果状态中还有 outputs 字段
         return self.state.get("tasks", {}).get(task_id, {}).get("outputs", {})
 
     def set_overall_status(self, status: str):
@@ -153,10 +170,53 @@ class StateStore:
         }
         return summary
 
-    def _save(self):
-        """保存状态到文件"""
+    def _save_task_outputs(self, task_id: str, outputs: Dict[str, Any]):
+        """将任务输出保存到独立文件"""
+        output_file = os.path.join(self.output_dir, f"{task_id}_output.json")
+        tmp_file = output_file + ".tmp"
         try:
-            with open(self.state_file, "w", encoding="utf-8") as f:
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(outputs, f, ensure_ascii=False, indent=2, default=str)
+            # 原子替换
+            if os.name == "nt" and os.path.exists(output_file):
+                os.remove(output_file)
+            os.rename(tmp_file, output_file)
+        except Exception as e:
+            print(f"警告: 保存任务输出失败 [{task_id}]: {e}")
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except:
+                    pass
+
+    def _load_task_outputs(self, task_id: str) -> Dict[str, Any]:
+        """从独立文件加载任务输出"""
+        output_file = os.path.join(self.output_dir, f"{task_id}_output.json")
+        if not os.path.exists(output_file):
+            return {}
+        try:
+            with open(output_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, Exception) as e:
+            print(f"警告: 加载任务输出失败 [{task_id}]: {e}")
+            return {}
+
+    def _save(self):
+        """保存状态到文件（原子写入，防止损坏）"""
+        tmp_file = self.state_file + ".tmp"
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(self.state, f, ensure_ascii=False, indent=2)
+            # 原子替换：先写临时文件再rename
+            if os.name == "nt":  # Windows
+                if os.path.exists(self.state_file):
+                    os.remove(self.state_file)
+            os.rename(tmp_file, self.state_file)
         except Exception as e:
             print(f"警告: 保存状态文件失败: {e}")
+            # 清理临时文件
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except:
+                    pass

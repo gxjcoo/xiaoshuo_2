@@ -55,12 +55,33 @@ class InjectProfileTask(TaskNode):
             print("警告: 没有找到拆书结果，跳过注入")
             return {"profile_injected": False}
         
+        # 如果 book_profile 是字符串（LLM 返回异常），尝试解析
+        if isinstance(book_profile, str):
+            try:
+                book_profile = json.loads(book_profile)
+            except (json.JSONDecodeError, Exception):
+                print("警告: book_profile 是无效的字符串，跳过注入")
+                return {"profile_injected": False}
+        
+        # 确保是字典类型
+        if not isinstance(book_profile, dict):
+            print(f"警告: book_profile 类型异常 ({type(book_profile).__name__})，跳过注入")
+            return {"profile_injected": False}
+        
         # 加载现有上下文
         story_context = load_story_context()
         
         # 注入世界观设定
         if "world_setting" in book_profile:
             world_data = book_profile["world_setting"]
+            if isinstance(world_data, str):
+                # 如果是字符串，尝试解析为 JSON
+                try:
+                    world_data = json.loads(world_data)
+                except (json.JSONDecodeError, Exception):
+                    # 作为纯文本描述处理
+                    story_context["world_setting"]["description"] = world_data
+                    world_data = None
             if isinstance(world_data, dict):
                 # 合并世界观信息
                 if "description" in world_data:
@@ -68,7 +89,7 @@ class InjectProfileTask(TaskNode):
                 if "key_elements" in world_data:
                     # 合并关键元素，去重
                     existing_elements = set(story_context["world_setting"].get("key_elements", []))
-                    new_elements = set(world_data["key_elements"])
+                    new_elements = set(world_data["key_elements"]) if isinstance(world_data["key_elements"], list) else {world_data["key_elements"]}
                     story_context["world_setting"]["key_elements"] = list(existing_elements | new_elements)
                 # 保留额外的世界观细节
                 story_context["world_setting"]["detailed"] = world_data
@@ -76,6 +97,12 @@ class InjectProfileTask(TaskNode):
         # 注入主角信息
         if "protagonist" in book_profile:
             protagonist_data = book_profile["protagonist"]
+            if isinstance(protagonist_data, str):
+                try:
+                    protagonist_data = json.loads(protagonist_data)
+                except (json.JSONDecodeError, Exception):
+                    story_context["protagonist_info"]["description"] = protagonist_data
+                    protagonist_data = None
             if isinstance(protagonist_data, dict):
                 if "name" in protagonist_data:
                     story_context["protagonist_info"]["name"] = protagonist_data["name"]
@@ -102,17 +129,42 @@ class InjectProfileTask(TaskNode):
         
         # 注入伏笔系统
         if "foreshadowing" in book_profile:
-            # 将伏笔添加到 pending_hooks 中
-            existing_hooks = set(h.get("id", "") for h in story_context.get("pending_hooks", []))
-            for hook in book_profile["foreshadowing"]:
-                hook_id = hook.get("id", hook.get("content", "")[:20])
-                if hook_id not in existing_hooks:
-                    story_context.setdefault("pending_hooks", []).append({
-                        "id": hook_id,
-                        "content": hook.get("content", ""),
-                        "chapter_introduced": 0,  # 标记为原始伏笔
-                        "status": "open"
-                    })
+            foreshadowing = book_profile["foreshadowing"]
+            if isinstance(foreshadowing, str):
+                try:
+                    foreshadowing = json.loads(foreshadowing)
+                except (json.JSONDecodeError, Exception):
+                    foreshadowing = None
+            if isinstance(foreshadowing, dict):
+                # 如果是字典格式 {"pending": [...], "resolved": [...], ...}
+                hooks_list = foreshadowing.get("pending", foreshadowing.get("foreshadowing", []))
+                if isinstance(hooks_list, list):
+                    existing_hooks = set(h.get("id", "") for h in story_context.get("pending_hooks", []) if isinstance(h, dict))
+                    for hook in hooks_list:
+                        if not isinstance(hook, dict):
+                            continue
+                        hook_id = hook.get("id", hook.get("content", "")[:20])
+                        if hook_id not in existing_hooks:
+                            story_context.setdefault("pending_hooks", []).append({
+                                "id": hook_id,
+                                "content": hook.get("content", ""),
+                                "chapter_introduced": 0,
+                                "status": "open"
+                            })
+            elif isinstance(foreshadowing, list):
+                # 如果是列表格式
+                existing_hooks = set(h.get("id", "") for h in story_context.get("pending_hooks", []) if isinstance(h, dict))
+                for hook in foreshadowing:
+                    if not isinstance(hook, dict):
+                        continue
+                    hook_id = hook.get("id", hook.get("content", "")[:20])
+                    if hook_id not in existing_hooks:
+                        story_context.setdefault("pending_hooks", []).append({
+                            "id": hook_id,
+                            "content": hook.get("content", ""),
+                            "chapter_introduced": 0,
+                            "status": "open"
+                        })
         
         # 注入分卷规划
         if "volume_plan" in book_profile:

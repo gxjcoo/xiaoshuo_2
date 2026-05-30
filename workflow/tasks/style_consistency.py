@@ -61,8 +61,9 @@ class StyleConsistencyTask(TaskNode):
         style_guide = context.get("writing_style_guide") or story_context.get("writing_style_guide", "")
         
         # 如果没有参考文本，尝试加载
+        chapters_dir = context.get("chapters_dir", "chapters")
         if not reference_text:
-            reference_text = self._load_reference_text(chapter_number)
+            reference_text = self._load_reference_text(chapter_number, chapters_dir)
         
         if not reference_text:
             print(f"  警告: 未找到参考文本，跳过风格一致性验证")
@@ -121,13 +122,11 @@ class StyleConsistencyTask(TaskNode):
             "style_suggestions": suggestions
         }
 
-    def _load_reference_text(self, chapter_number: int) -> Optional[str]:
+    def _load_reference_text(self, chapter_number: int, chapters_dir: str = "chapters") -> Optional[str]:
         """加载参考文本"""
         import os
         
-        # 从输入目录加载
-        input_dir = context.get("chapters_dir", "chapters")
-        ref_file = os.path.join(input_dir, f"{chapter_number}.md")
+        ref_file = os.path.join(chapters_dir, f"{chapter_number}.md")
         
         if os.path.exists(ref_file):
             with open(ref_file, "r", encoding="utf-8") as f:

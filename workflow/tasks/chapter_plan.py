@@ -42,7 +42,8 @@ class ChapterPlanTask(TaskNode):
             - chapter_intent: 章节意图文档
         """
         from ai_handler import plan_chapter_with_ai
-        from config import RUNTIME_DIR
+        from config import RUNTIME_DIR, STRICT_SOURCE_PLOT
+        from context_manager import load_story_context
         
         chapter_number = context.get("chapter_number")
         reference_text = context.get("reference_text")
@@ -58,13 +59,25 @@ class ChapterPlanTask(TaskNode):
             with open(intent_file, "r", encoding="utf-8") as f:
                 chapter_intent = f.read()
         else:
-            # 调用 AI 规划
+            # 加载故事上下文
+            current_context = load_story_context()
+            
+            # 获取上一章内容（用于衔接）
+            previous_chapter_content = None
+            chapters_dir = context.get("chapters_dir", "chapters")
+            if chapter_number > 1:
+                prev_file = os.path.join(chapters_dir, f"{chapter_number - 1}.md")
+                if os.path.exists(prev_file):
+                    with open(prev_file, "r", encoding="utf-8") as f:
+                        previous_chapter_content = f.read()
+            
+            # 调用 AI 规划（参数顺序：context, chapter_number, prev_content, ...）
             chapter_intent = plan_chapter_with_ai(
+                current_context,
                 chapter_number,
-                reference_text,
-                outline,
-                writing_style,
-                entity_map
+                previous_chapter_content=previous_chapter_content,
+                reference_chapter_text=reference_text or "",
+                strict_source_plot=STRICT_SOURCE_PLOT
             )
             
             # 缓存结果

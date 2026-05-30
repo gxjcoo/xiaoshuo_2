@@ -19,10 +19,13 @@ inkos/
 output_chapters/
 chapters_out/
 runtime/
+task_outputs/
 story_context.json
 pruned_context_archive.json
 all/
 workflow_state.json
+workflow_state.json.tmp
+workflow_state_backup.json
 book_profile.json
 single_chapter_output.txt
 
