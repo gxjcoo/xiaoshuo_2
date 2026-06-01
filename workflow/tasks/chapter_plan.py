@@ -86,6 +86,10 @@ class ChapterPlanTask(TaskNode):
                 with open(intent_file, "w", encoding="utf-8") as f:
                     f.write(chapter_intent)
         
+        # 验证意图非空
+        if not chapter_intent or not chapter_intent.strip():
+            raise ValueError(f"章节 {chapter_number} 意图生成为空，请重试")
+        
         return {
             "chapter_intent": chapter_intent
         }

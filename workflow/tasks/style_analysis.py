@@ -67,6 +67,10 @@ class StyleAnalysisTask(TaskNode):
             with open(cache_file, "w", encoding="utf-8") as f:
                 f.write(writing_style)
         
+        # 验证风格分析非空
+        if not writing_style or not writing_style.strip():
+            raise ValueError(f"章节 {chapter_number} 风格分析为空，请重试")
+        
         return {
             "writing_style": writing_style
         }

@@ -115,6 +115,10 @@ class ContentGenerateTask(TaskNode):
             generated_content = result
             generated_title = f"第{chapter_number}章"
         
+        # 验证生成内容非空
+        if not generated_content or not generated_content.strip():
+            raise ValueError(f"章节 {chapter_number} 正文生成为空，请重试")
+        
         return {
             "generated_content": generated_content,
             "generated_title": generated_title

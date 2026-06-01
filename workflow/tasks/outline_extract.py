@@ -78,8 +78,14 @@ class OutlineExtractTask(TaskNode):
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(outline.to_dict(), f, ensure_ascii=False, indent=2)
         
+        # 验证骨架非空
+        if not outline:
+            raise ValueError(f"章节 {chapter_number} 骨架抽取为空，请重试")
+        
+        # 返回字典格式（确保 JSON 序列化兼容）
+        outline_dict = outline.to_dict() if hasattr(outline, 'to_dict') else outline
         return {
-            "outline": outline
+            "outline": outline_dict
         }
 
     def validate_inputs(self, context: Dict[str, Any]) -> bool:

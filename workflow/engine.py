@@ -158,7 +158,57 @@ class WorkflowEngine:
         self.state = StateStore(state_file)
         self.progress = ProgressTracker()
         self.auto_skip = auto_skip
-        self.context: Dict[str, Any] = {}
+        self.context: Dict[str, Any] = {}  # 全局共享上下文（如 novel_path 等配置）
+        self._global_context: Dict[str, Any] = {}  # 保存初始全局配置，不被任务输出覆盖
+
+    def _get_all_upstream_ids(self, task_id: str) -> List[str]:
+        """
+        获取任务的所有上游依赖 ID（递归，拓扑排序前序）
+        
+        Args:
+            task_id: 任务 ID
+            
+        Returns:
+            所有上游任务 ID 列表（按拓扑顺序）
+        """
+        visited = set()
+        result = []
+        
+        def _dfs(nid):
+            if nid in visited:
+                return
+            visited.add(nid)
+            for dep_id in self.dag.get_dependencies(nid):
+                _dfs(dep_id)
+                if dep_id not in result:
+                    result.append(dep_id)
+        
+        _dfs(task_id)
+        return result
+
+    def _build_task_context(self, task_id: str) -> Dict[str, Any]:
+        """
+        为指定任务构建独立的上下文
+        
+        从全局配置和所有上游依赖项的输出中组装上下文，
+        避免不同章节的任务输出互相覆盖。
+        
+        Args:
+            task_id: 任务 ID
+            
+        Returns:
+            该任务的上下文字典
+        """
+        task_context = dict(self._global_context)
+        
+        # 加载所有上游依赖项的输出（按拓扑顺序）
+        upstream_ids = self._get_all_upstream_ids(task_id)
+        for dep_id in upstream_ids:
+            dep_outputs = self.state.get_task_outputs(dep_id)
+            if dep_outputs:
+                task_context.update(dep_outputs)
+        
+        return task_context
 
     def run(self, resume: bool = True) -> Dict[str, Any]:
         """
@@ -183,11 +233,24 @@ class WorkflowEngine:
             existing_state = self.state.load_existing_run()
             if existing_state:
                 print(f"恢复之前的运行: run_id={existing_state.get('run_id')}")
-                self.context = existing_state.get("context", {})
+                # 恢复全局配置：CLI 设置的上下文优先，否则从状态文件加载
+                saved_global = existing_state.get("global_context", {})
+                if self.context:
+                    # CLI 显式设置了上下文（如 cmd_run --resume），使用 CLI 的
+                    self._global_context = dict(self.context)
+                elif saved_global:
+                    # 从状态文件恢复（如 cmd_resume）
+                    self._global_context = saved_global
+                else:
+                    self._global_context = {}
             else:
                 self.state.create_new_run(self.dag.to_definition())
+                self._global_context = dict(self.context)
+                self.state.set_global_context(self._global_context)
         else:
             self.state.create_new_run(self.dag.to_definition())
+            self._global_context = dict(self.context)
+            self.state.set_global_context(self._global_context)
         
         # 获取执行顺序
         execution_order = self.dag.get_execution_order()
@@ -204,14 +267,28 @@ class WorkflowEngine:
             
             # 检查是否可跳过
             if self.auto_skip and self.state.get_task_status(task_id) == "completed":
-                self.progress.skip_task(task_id, "已完成")
-                # 加载之前的输出到上下文
                 outputs = self.state.get_task_outputs(task_id)
-                self.context.update(outputs)
-                continue
+                # 检查输出是否有实际内容（空输出视为未完成，需重新执行）
+                has_valid_output = False
+                if outputs:
+                    for v in outputs.values():
+                        if v is not None and v != "" and v != {} and v != []:
+                            has_valid_output = True
+                            break
+                
+                if has_valid_output:
+                    self.progress.skip_task(task_id, "已完成")
+                    continue
+                else:
+                    # 输出为空，标记为待重新执行
+                    self.progress.skip_task(task_id, "输出为空，将重新执行")
+                    self.state.update_task_status(task_id, "pending")
+            
+            # 为当前任务构建独立上下文（从依赖项输出中加载）
+            task_context = self._build_task_context(task_id)
             
             # 检查输入
-            if not node.validate_inputs(self.context):
+            if not node.validate_inputs(task_context):
                 self.progress.fail_task(task_id, "输入验证失败")
                 self.state.update_task_status(task_id, "failed", error="输入验证失败")
                 self.state.set_overall_status("failed")
@@ -222,9 +299,8 @@ class WorkflowEngine:
             self.state.update_task_status(task_id, "running")
             
             try:
-                outputs = node.execute(self.context)
+                outputs = node.execute(task_context)
                 if outputs:
-                    self.context.update(outputs)
                     self.state.update_task_status(task_id, "completed", outputs=outputs)
                 else:
                     self.state.update_task_status(task_id, "completed")

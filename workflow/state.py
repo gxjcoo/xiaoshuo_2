@@ -134,6 +134,11 @@ class StateStore:
         """获取上下文数据"""
         return self.state.get("context", {}).get(key, default)
 
+    def set_global_context(self, global_context: Dict[str, Any]):
+        """保存全局配置（用于恢复时重建上下文）"""
+        self.state["global_context"] = global_context
+        self._save()
+
     def get_task_status(self, task_id: str) -> str:
         """获取任务状态"""
         return self.state.get("tasks", {}).get(task_id, {}).get("status", "pending")

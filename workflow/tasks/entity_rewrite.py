@@ -78,23 +78,25 @@ class EntityRewriteTask(TaskNode):
             print(f"  使用缓存的实体映射: chapter {chapter_number}")
             entity_map = cached_map
         else:
-            # 提取实体映射
-            entity_map = extract_entity_map_from_reference(reference_text, chapter_number)
+            # 加载全局映射作为基准，确保跨章节一致性
+            global_map = load_global_entity_map()
+            # 提取实体映射，传入全局映射以保持一致性
+            entity_map = extract_entity_map_from_reference(reference_text, chapter_number, global_map)
             
             if entity_map:
                 # 保存章节映射
                 save_entity_map(chapter_number, entity_map)
                 
                 # 合并到全局映射
-                global_map = load_global_entity_map()
-                merged = merge_entity_maps(global_map, entity_map)
+                merged = merge_entity_maps(global_map, entity_map, chapter_number)
                 save_global_entity_map(merged)
         
-        # 获取扁平化映射用于生成
-        flat_map = flatten_entity_map(entity_map) if entity_map else None
+        # 获取全局实体映射，确保跨章节一致性
+        global_entity_map = load_global_entity_map()
+        flat_map = flatten_entity_map(global_entity_map) if global_entity_map else None
         
         return {
-            "entity_map": entity_map,
+            "entity_map": flat_map,  # 返回扁平化格式，与 _entity_rewrite_block 兼容
             "entity_map_flat": flat_map,
             "entity_rewrite_enabled": True
         }
