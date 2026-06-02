@@ -143,6 +143,14 @@ def build_full_dag(
     
     # 添加每章的处理节点
     for chapter_num in range(start_chapter, end_chapter + 1):
+        # 确定前一章的输出任务
+        previous_chapter_output_task = None
+        if chapter_num > start_chapter:
+            if enable_context_update:
+                previous_chapter_output_task = f"update_context_ch{chapter_num - 1}"
+            else:
+                previous_chapter_output_task = f"write_output_ch{chapter_num - 1}"
+        
         # 为每章创建带编号的节点
         chapter_nodes = _create_chapter_nodes(
             chapter_num,
@@ -151,7 +159,8 @@ def build_full_dag(
             enable_continuity_check,
             enable_foreshadow_manager,
             enable_style_consistency,
-            start_chapter
+            start_chapter,
+            previous_chapter_output_task
         )
         
         for node in chapter_nodes:
@@ -167,9 +176,21 @@ def _create_chapter_nodes(
     enable_continuity_check: bool = True,
     enable_foreshadow_manager: bool = True,
     enable_style_consistency: bool = True,
-    start_chapter: int = 1
+    start_chapter: int = 1,
+    previous_chapter_output_task: Optional[str] = None
 ) -> list:
-    """为单章创建所有处理节点"""
+    """为单章创建所有处理节点
+    
+    Args:
+        chapter_number: 章节号
+        enable_entity_rewrite: 是否启用实体改写
+        enable_context_update: 是否更新上下文
+        enable_continuity_check: 是否启用连贯性检查
+        enable_foreshadow_manager: 是否启用伏笔管理
+        enable_style_consistency: 是否启用风格一致性验证
+        start_chapter: 起始章节号
+        previous_chapter_output_task: 前一章的输出任务 ID（用于串行执行）
+    """
     
     # 全局任务 ID 列表（不添加章节号）
     global_task_ids = {"split_novel", "decompose_book", "decompose_advanced", "inject_profile"}
@@ -206,6 +227,14 @@ def _create_chapter_nodes(
             # 对需要串行的任务，添加前章依赖
             if self.task.id in serial_task_ids and self.chapter_num > start_chapter:
                 result.append(f"{self.task.id}_ch{self.chapter_num - 1}")
+            
+            # 如果是第2章及以后，并且有前一章的输出任务，则添加依赖
+            if (self.chapter_num > start_chapter and 
+                previous_chapter_output_task and 
+                self.task.id not in global_task_ids):
+                # 避免重复添加依赖
+                if previous_chapter_output_task not in result:
+                    result.append(previous_chapter_output_task)
             
             return result
         

@@ -17,6 +17,7 @@
 import datetime as _dt
 import json
 import os
+import re
 from typing import Dict, List, Optional, Union
 
 from config import RUNTIME_DIR, CONTEXT_ANALYSIS_MODEL
@@ -25,6 +26,50 @@ from ai_handler import call_deepseek_api
 ENTITY_CACHE_SUFFIX = "entity_map.json"
 GLOBAL_ENTITY_MAP_FILE = "global_entity_map.json"
 ENTITY_CATEGORIES = ("characters", "places", "events", "objects_animals")
+
+# 常用字黑名单：这些字/词绝不能作为实体名被替换，否则会破坏正常文本
+# 单字黑名单覆盖最常见的中文虚词、量词、方位词、身体部位等
+_ENTITY_BLACKLIST_SINGLE = frozenset([
+    "头", "口", "手", "脚", "眼", "心", "脸", "身", "嘴", "耳", "鼻", "眉", "发",
+    "人", "大", "小", "上", "下", "左", "右", "前", "后", "里", "外", "中", "内",
+    "天", "地", "山", "水", "风", "火", "石", "木", "草", "花", "树", "云", "雨",
+    "金", "银", "铁", "铜", "玉", "珠", "刀", "剑", "门", "路", "桥", "车", "船",
+    "家", "房", "屋", "城", "村", "镇", "县", "州", "府", "国", "殿", "楼", "阁",
+    "老", "新", "男", "女", "长", "少", "公", "母", "好", "坏", "黑", "白", "红",
+    "走", "来", "去", "看", "听", "说", "吃", "喝", "坐", "站", "跑", "飞", "打",
+    "一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "百", "千", "万",
+    "你", "我", "他", "她", "它", "谁", "这", "那", "什么", "怎么", "哪",
+    "的", "了", "着", "过", "地", "得", "把", "被", "让", "给", "对", "向", "从",
+    "和", "与", "及", "或", "但", "而", "就", "也", "都", "还", "又", "再", "才",
+    "很", "太", "最", "更", "越", "挺", "真", "假", "会", "能", "要", "想", "该",
+])
+
+# 多字黑名单：常见的短词也不应作为实体名
+_ENTITY_BLACKLIST_MULTI = frozenset([
+    "这个", "那个", "什么", "怎么", "哪里", "这里", "那里", "自己", "别人",
+    "大家", "咱们", "我们", "你们", "他们", "她们", "它们",
+    "一个", "两个", "几个", "所有", "每个", "某些",
+    "可以", "应该", "能够", "需要", "必须", "已经", "正在", "将要",
+    "不是", "没有", "还是", "就是", "只是", "都是", "也是",
+    "因为", "所以", "如果", "虽然", "但是", "不过", "然而", "而且",
+    "然后", "接着", "于是", "因此", "所以", "总之",
+    "突然", "忽然", "居然", "竟然", "果然", "当然", "自然",
+    "起来", "出来", "过来", "回来", "下来", "上来",
+    "地方", "时候", "东西", "事情", "样子", "名字", "声音",
+])
+
+def _is_entity_blacklisted(name: str) -> bool:
+    """检查实体名是否在黑名单中（不应被替换的常用字/词）。"""
+    name = name.strip()
+    if not name:
+        return True
+    if len(name) == 1 and name in _ENTITY_BLACKLIST_SINGLE:
+        return True
+    if name in _ENTITY_BLACKLIST_MULTI:
+        return True
+    # 2字以下且不含特定姓氏/称号特征的，谨慎处理
+    # 但不完全禁止2字名（如"张三"是合法实体名）
+    return False
 
 # 章节级映射值类型：str（扁平格式）
 # 全局映射值类型：dict（带元数据）或 str（向后兼容旧格式）
@@ -169,6 +214,8 @@ def merge_entity_maps(
             new_name = new_name.strip()
             if not old or not new_name or old == new_name:
                 continue
+            if _is_entity_blacklisted(old):
+                continue
             if old in base[cat]:
                 continue
             if new_name in existing_new_names:
@@ -294,8 +341,96 @@ def extract_entity_map_from_reference(
 
 # =================== 文本改写 ===================
 
+# 通用称谓后缀集合（不限于特定题材，覆盖常见中文称谓）
+# 设计原则：包含 1-3 字的常见称谓后缀，支持古风/现代/武侠/仙侠等多题材
+_TITLE_SUFFIXES: List[str] = [
+    # 道教/仙侠类
+    "道长", "道人", "真人", "道友", "道兄", "仙子", "仙姑", "仙长",
+    # 武侠/江湖类
+    "大侠", "女侠", "侠客", "侠士", "前辈", "老前辈",
+    # 门派/师徒类
+    "长老", "老祖", "掌门", "宗主", "门主", "教主",
+    "师兄", "师姐", "师弟", "师妹", "师父", "师尊", "恩师", "师叔", "师伯",
+    # 官职/权贵类
+    "大人", "老爷", "老夫人", "夫人", "公子", "少爷", "小姐", "姑娘",
+    "王爷", "皇子", "公主", "太子",
+    # 民间/职业类
+    "员外", "乡绅", "掌柜", "老板", "东家", "老板娘",
+    "捕头", "都头", "班头", "总管", "管家",
+    "大夫", "郎中", "先生",
+    # 称呼类
+    "兄弟", "兄台", "贤弟", "贤妹", "仁兄", "贤侄",
+    "老丈", "老者", "老翁", "老婆婆",
+    # 现代类
+    "同志", "老师", "教授", "医生", "律师",
+]
+
+
+def _extract_name_parts(name: str) -> tuple:
+    """提取角色名的核心部分和称谓后缀。
+    
+    策略：从后向前匹配已知后缀，返回 (核心, 后缀)。
+    如果无法识别后缀，返回 (完整名称, "")。
+    
+    例如：
+        '宝寿道长' → ('宝寿', '道长')
+        '青云道人' → ('青云', '道人')
+        '郑大人'   → ('郑', '大人')
+        '小熊'     → ('小熊', '')
+    """
+    for suffix in _TITLE_SUFFIXES:
+        if name.endswith(suffix) and len(name) > len(suffix):
+            return (name[:-len(suffix)], suffix)
+    return (name, "")
+
+
+def _generate_name_variants(old_name: str, new_name: str) -> Dict[str, str]:
+    """为角色名生成称谓后缀变体的替换对（保持后缀一致性）。
+    
+    核心逻辑：
+    1. 提取原名的核心+后缀（如 "宝寿道长" → 核心="宝寿", 后缀="道长"）
+    2. 提取新名的核心+后缀（如 "青云道人" → 核心="青云", 后缀="道人"）
+    3. 对于每个可能的变体后缀，生成：新核心 + 变体后缀
+    
+    例如：old='宝寿道长', new='青云道人'
+    - 宝寿道人 → 青云道人（保持"道人"后缀）
+    - 宝寿真人 → 青云真人（保持"真人"后缀）
+    - 宝寿道友 → 青云道友（保持"道友"后缀）
+    - 宝寿道兄 → 青云道兄（保持"道兄"后缀）
+    """
+    variants: Dict[str, str] = {}
+    
+    # 提取原名的核心和后缀
+    old_core, old_suffix = _extract_name_parts(old_name)
+    if not old_core:
+        return variants
+    
+    # 提取新名的核心
+    new_core, _ = _extract_name_parts(new_name)
+    if not new_core:
+        new_core = new_name
+    
+    # 如果原名没有后缀，无法生成变体
+    if not old_suffix:
+        return variants
+    
+    # 为所有可能的后缀生成变体（排除原名自身）
+    for suffix in _TITLE_SUFFIXES:
+        if suffix == old_suffix:
+            continue  # 跳过原名自身后缀
+        
+        variant_old = old_core + suffix
+        variant_new = new_core + suffix
+        
+        # 只有变体与原名不同时才添加
+        if variant_old != old_name:
+            variants[variant_old] = variant_new
+    
+    return variants
+
+
 def _flatten_replacements(entity_map: Union[EntityMapFlat, EntityMapRich, None]) -> Dict[str, str]:
-    """从任意格式映射提取扁平替换对。"""
+    """从任意格式映射提取扁平替换对（含变体扩展）。"""
     pairs: Dict[str, str] = {}
     if not isinstance(entity_map, dict):
         return pairs
@@ -312,6 +447,15 @@ def _flatten_replacements(entity_map: Union[EntityMapFlat, EntityMapRich, None])
             if not old or not new or old == new:
                 continue
             pairs[old] = new
+            
+            # 对 characters 类别生成称谓后缀变体
+            if cat == "characters":
+                variants = _generate_name_variants(old, new)
+                for variant_old, variant_new in variants.items():
+                    # 只添加原映射中没有明确覆盖的变体
+                    if variant_old not in pairs:
+                        pairs[variant_old] = variant_new
+    
     return pairs
 
 
@@ -334,10 +478,16 @@ def detect_original_entity_leaks(
     text: str,
     entity_map: Union[EntityMapFlat, EntityMapRich, None],
 ) -> List[Dict]:
-    """检测文本中残留的原实体名。返回 [{entity, category, count, expected}, ...]"""
+    """检测文本中残留的原实体名（含称谓后缀变体）。
+    
+    返回 [{entity, category, count, expected}, ...]
+    对于 characters 类别，除了检测原名，还检测其称谓后缀变体。
+    """
     if not text or not entity_map:
         return []
     leaks: List[Dict] = []
+    seen_entities: set = set()  # 避免重复报告
+    
     for cat in ENTITY_CATEGORIES:
         for old, v in (entity_map.get(cat, {}) or {}).items():
             if not isinstance(old, str):
@@ -345,14 +495,45 @@ def detect_original_entity_leaks(
             new = _normalize_value(v)
             if not old or old == new:
                 continue
+            
+            # 检测原名
             count = text.count(old)
-            if count > 0:
+            if count > 0 and old not in seen_entities:
                 leaks.append({
                     "entity": old,
                     "category": cat,
                     "count": count,
                     "expected": new,
                 })
+                seen_entities.add(old)
+            
+            # 对 characters 类别，检测称谓后缀变体
+            if cat == "characters":
+                old_core, old_suffix = _extract_name_parts(old)
+                if old_core and old_suffix:
+                    new_core, _ = _extract_name_parts(new)
+                    if not new_core:
+                        new_core = new
+                    
+                    for suffix in _TITLE_SUFFIXES:
+                        if suffix == old_suffix:
+                            continue
+                        
+                        variant_name = old_core + suffix
+                        if variant_name != old and variant_name not in seen_entities:
+                            count = text.count(variant_name)
+                            if count > 0:
+                                expected_variant = new_core + suffix
+                                leaks.append({
+                                    "entity": variant_name,
+                                    "category": cat,
+                                    "count": count,
+                                    "expected": expected_variant,
+                                    "is_variant": True,
+                                    "original_entity": old,
+                                })
+                                seen_entities.add(variant_name)
+    
     return leaks
 
 
@@ -361,8 +542,11 @@ def format_entity_leak_report(leaks: List[Dict]) -> str:
         return "无原实体残留"
     lines = [f"检测到 {len(leaks)} 个原实体残留："]
     for leak in leaks:
+        variant_info = ""
+        if leak.get("is_variant"):
+            variant_info = f" [变体，原名: {leak.get('original_entity', '?')}]"
         lines.append(
-            f"  - {leak['entity']}（{leak['category']}）残留 {leak['count']} 次，应改为 {leak['expected']}"
+            f"  - {leak['entity']}（{leak['category']}）残留 {leak['count']} 次，应改为 {leak['expected']}{variant_info}"
         )
     return "\n".join(lines)
 
