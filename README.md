@@ -182,6 +182,33 @@ python rename_chapters.py chapters_out
 - `combine_chapters.py`：按自然序合并目录内 `.md` 章节。
 - `rename_chapters.py`：将 `第十二章xxx.md` 这类文件名转换成 `12.md`。
 
+## 工具脚本（scripts/）
+
+`scripts/` 目录包含用于检查、修复和测试生成章节的辅助脚本：
+
+```bash
+# 全面检查所有章节质量
+python scripts/check_all_chapters.py
+
+# 批量修复已知问题（三尺青锋错误、重复文本、标题格式等）
+python scripts/fix_all_issues.py
+
+# 检查生成进度
+python scripts/check_progress.py
+```
+
+| 脚本 | 用途 |
+|------|------|
+| `check_all_chapters.py` | 全面检查所有章节，检测标题格式、三尺青锋错误、重复文本、修订说明等问题 |
+| `fix_all_issues.py` | 批量修复所有已知问题 |
+| `test_dag_structure.py` | 测试DAG结构相关功能 |
+| `check_intent.py` | 检查生成意图 |
+| `check_progress.py` | 检查生成进度 |
+| `check_result.py` | 检查生成结果 |
+| `fix_state.py` | 修复状态文件 |
+
+详细说明见 `scripts/README.md`。
+
 ## 配置说明
 
 - 提供商与模型：`config.py` + `.env`（`LLM_PROVIDER`、`MIMO_*`、`DEEPSEEK_*`、`DOUBAO_*` 等）

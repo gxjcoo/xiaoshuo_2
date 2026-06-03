@@ -46,11 +46,14 @@ class WriteOutputTask(TaskNode):
         
         # 修复重复文本问题
         try:
-            from entity_rewriter import fix_duplicate_text, detect_duplicate_text, remove_revision_notes
+            from entity_rewriter import fix_duplicate_text, detect_duplicate_text, remove_revision_notes, fix_sanchi_qingfeng_compound
             duplicates = detect_duplicate_text(final_content)
             if duplicates:
                 print(f"  检测到 {len(duplicates)} 处重复文本，正在修复...")
                 final_content = fix_duplicate_text(final_content)
+            
+            # 修复三尺青锋复合词错误
+            final_content = fix_sanchi_qingfeng_compound(final_content)
             
             # 移除修订说明（AI生成时可能留下的编辑痕迹）
             original_length = len(final_content)
