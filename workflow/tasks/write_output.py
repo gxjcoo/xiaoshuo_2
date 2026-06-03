@@ -46,13 +46,19 @@ class WriteOutputTask(TaskNode):
         
         # 修复重复文本问题
         try:
-            from entity_rewriter import fix_duplicate_text, detect_duplicate_text
+            from entity_rewriter import fix_duplicate_text, detect_duplicate_text, remove_revision_notes
             duplicates = detect_duplicate_text(final_content)
             if duplicates:
                 print(f"  检测到 {len(duplicates)} 处重复文本，正在修复...")
                 final_content = fix_duplicate_text(final_content)
+            
+            # 移除修订说明（AI生成时可能留下的编辑痕迹）
+            original_length = len(final_content)
+            final_content = remove_revision_notes(final_content)
+            if len(final_content) < original_length:
+                print(f"  已移除修订说明（减少 {original_length - len(final_content)} 字符）")
         except ImportError:
-            # 如果无法导入，跳过重复文本修复
+            # 如果无法导入，跳过文本修复
             pass
         
         # 构建输出内容

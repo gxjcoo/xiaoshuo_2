@@ -665,6 +665,55 @@ def fix_duplicate_text(text: str) -> str:
     return result
 
 
+def remove_revision_notes(text: str) -> str:
+    """移除文本中的修订说明（AI生成时可能留下的编辑痕迹）。
+    
+    支持的修订说明格式：
+    1. 括号内的修订说明：（修订说明：...）或 (修订说明：...)
+    2. 章节末尾的修订说明块：以"---"开头，包含"修订说明"的块
+    3. 以"修订说明"、"修订记录"、"修改说明"等开头的段落
+    """
+    if not text:
+        return text
+    
+    import re
+    
+    result = text
+    
+    # 1. 移除括号内的修订说明
+    # 匹配中文括号或英文括号内的修订说明
+    result = re.sub(r'[（(]修订说明[：:][^）)]*[）)]', '', result)
+    result = re.sub(r'[（(]修改说明[：:][^）)]*[）)]', '', result)
+    result = re.sub(r'[（(]修正说明[：:][^）)]*[）)]', '', result)
+    result = re.sub(r'[（(]修订记录[：:][^）)]*[）)]', '', result)
+    
+    # 2. 移除章节末尾的修订说明块
+    # 匹配以"---"开头，包含"修订说明"的块（直到文件末尾）
+    revision_block_pattern = r'\n---\s*\n\*\*修订说明\*\*.*$'
+    result = re.sub(revision_block_pattern, '', result, flags=re.DOTALL)
+    
+    # 匹配以"---"开头，包含"修订说明"的块（不带加粗）
+    revision_block_pattern2 = r'\n---\s*\n修订说明.*$'
+    result = re.sub(revision_block_pattern2, '', result, flags=re.DOTALL)
+    
+    # 3. 移除以"修订说明"、"修订记录"、"修改说明"等开头的段落
+    # 匹配独立的修订说明段落（以换行开头，包含修订说明关键词）
+    revision_paragraph_patterns = [
+        r'\n修订说明[：:].*?(?=\n\n|\n#|\n\*\*|\Z)',
+        r'\n修订记录[：:].*?(?=\n\n|\n#|\n\*\*|\Z)',
+        r'\n修改说明[：:].*?(?=\n\n|\n#|\n\*\*|\Z)',
+        r'\n修正说明[：:].*?(?=\n\n|\n#|\n\*\*|\Z)',
+    ]
+    
+    for pattern in revision_paragraph_patterns:
+        result = re.sub(pattern, '', result, flags=re.DOTALL)
+    
+    # 清理多余的空行（连续3个以上空行合并为2个）
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    
+    return result
+
+
 def format_entity_map_for_prompt(entity_map: Union[EntityMapFlat, EntityMapRich, None], max_per_category: int = 0) -> str:
     """把实体映射格式化成提示词块。max_per_category=0 表示不截断（默认列全部）。"""
     if not entity_map:
