@@ -216,8 +216,8 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
     if max_tokens is None:
         max_tokens = MAX_OUTPUT_TOKENS
 
-    retries = 3
-    delay = 5
+    retries = 8
+    delay = 8
     last_exception = None
 
     for attempt in range(retries):

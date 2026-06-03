@@ -113,7 +113,17 @@ class ContentGenerateTask(TaskNode):
             generated_content, generated_title = result
         else:
             generated_content = result
-            generated_title = f"第{chapter_number}章"
+            # 从内容中提取标题
+            if generated_content and generated_content.strip().startswith("# "):
+                lines = generated_content.strip().splitlines()
+                generated_title = lines[0].lstrip("# ").strip()
+                # 移除标题行和紧随的空行
+                body_lines = lines[1:]
+                while body_lines and not body_lines[0].strip():
+                    body_lines = body_lines[1:]
+                generated_content = "\n".join(body_lines)
+            else:
+                generated_title = f"第{chapter_number}章"
         
         # 验证生成内容非空
         if not generated_content or not generated_content.strip():

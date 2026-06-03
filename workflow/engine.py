@@ -298,15 +298,36 @@ class WorkflowEngine:
             self.progress.start_task(task_id, node.name)
             self.state.update_task_status(task_id, "running")
             
-            try:
-                outputs = node.execute(task_context)
-                if outputs:
-                    self.state.update_task_status(task_id, "completed", outputs=outputs)
-                else:
-                    self.state.update_task_status(task_id, "completed")
-                self.progress.complete_task(task_id, success=True)
-            except Exception as e:
-                error_msg = str(e)
+            # 任务级重试：API间歇性失败时自动重试
+            max_task_retries = 3
+            task_retry_delay = 15  # 秒
+            task_success = False
+            
+            for task_attempt in range(max_task_retries):
+                try:
+                    if task_attempt > 0:
+                        print(f"  任务重试 ({task_attempt + 1}/{max_task_retries})，等待 {task_retry_delay} 秒...", flush=True)
+                        import time
+                        time.sleep(task_retry_delay)
+                        task_retry_delay *= 2  # 指数退避
+                    
+                    outputs = node.execute(task_context)
+                    if outputs:
+                        self.state.update_task_status(task_id, "completed", outputs=outputs)
+                    else:
+                        self.state.update_task_status(task_id, "completed")
+                    self.progress.complete_task(task_id, success=True)
+                    task_success = True
+                    break
+                except Exception as e:
+                    error_msg = str(e)
+                    if task_attempt < max_task_retries - 1:
+                        print(f"  任务失败 (尝试 {task_attempt + 1}/{max_task_retries}): {error_msg}", flush=True)
+                        print(f"  将在 {task_retry_delay} 秒后重试...", flush=True)
+                    else:
+                        print(f"  任务失败，已达最大重试次数: {error_msg}", flush=True)
+            
+            if not task_success:
                 self.state.update_task_status(task_id, "failed", error=error_msg)
                 self.progress.fail_task(task_id, error_msg)
                 self.state.set_overall_status("failed")

@@ -137,7 +137,7 @@ ENTITY_REWRITE = os.environ.get("ENTITY_REWRITE", "1").strip() in {"1", "true", 
 
 # 章节间等待秒数：串行批量跑时在相邻两章之间暂停，避免触发 API rate limit。
 # 默认 5 秒；调试时可设为 0 加快迭代；大批量可适当调大。
-INTER_CHAPTER_SLEEP = int(os.environ.get("INTER_CHAPTER_SLEEP", "5"))
+INTER_CHAPTER_SLEEP = int(os.environ.get("INTER_CHAPTER_SLEEP", "10"))
 
 # --- 降低 AI 味道配置 ---
 ENABLE_ANTI_AI_REWRITE = True
