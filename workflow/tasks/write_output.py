@@ -44,6 +44,17 @@ class WriteOutputTask(TaskNode):
         if not final_content:
             raise ValueError("没有内容可写入")
         
+        # 修复重复文本问题
+        try:
+            from entity_rewriter import fix_duplicate_text, detect_duplicate_text
+            duplicates = detect_duplicate_text(final_content)
+            if duplicates:
+                print(f"  检测到 {len(duplicates)} 处重复文本，正在修复...")
+                final_content = fix_duplicate_text(final_content)
+        except ImportError:
+            # 如果无法导入，跳过重复文本修复
+            pass
+        
         # 构建输出内容
         output_content = f"# {generated_title}\n\n{final_content}"
         

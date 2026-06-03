@@ -199,9 +199,12 @@ def merge_entity_maps(
         if base_is_rich:
             break
     existing_new_names = set()
+    existing_old_names = set()  # 新增：收集所有类别的原名
     for cat in ENTITY_CATEGORIES:
-        for v in (base.get(cat, {}) or {}).values():
+        for old, v in (base.get(cat, {}) or {}).items():
             existing_new_names.add(_normalize_value(v))
+            if isinstance(old, str):
+                existing_old_names.add(old.strip())
     for cat in ENTITY_CATEGORIES:
         new_pairs = incoming.get(cat, {}) or {}
         if not isinstance(new_pairs, dict):
@@ -217,6 +220,8 @@ def merge_entity_maps(
             if _is_entity_blacklisted(old):
                 continue
             if old in base[cat]:
+                continue
+            if old in existing_old_names:  # 新增：检查跨类别原名冲突
                 continue
             if new_name in existing_new_names:
                 continue
@@ -549,6 +554,115 @@ def format_entity_leak_report(leaks: List[Dict]) -> str:
             f"  - {leak['entity']}（{leak['category']}）残留 {leak['count']} 次，应改为 {leak['expected']}{variant_info}"
         )
     return "\n".join(lines)
+
+
+def detect_duplicate_text(text: str, min_repeat_length: int = 2, max_repeat_length: int = 10) -> List[Dict]:
+    """检测文本中的重复字符或短语（如"乾坤乾坤乾坤"）。
+    
+    返回重复模式列表：[{"pattern": "乾坤", "count": 3, "position": 10}, ...]
+    """
+    if not text or len(text) < min_repeat_length * 2:
+        return []
+    
+    duplicates = []
+    
+    # 检测长度为 min_repeat_length 到 max_repeat_length 的重复模式
+    for length in range(min_repeat_length, max_repeat_length + 1):
+        i = 0
+        while i <= len(text) - length * 2:
+            pattern = text[i:i + length]
+            # 跳过纯标点或空白
+            if not pattern.strip() or all(c in '，。！？、；：""''（）【】《》 \t\n' for c in pattern):
+                i += 1
+                continue
+            
+            # 计算连续重复次数
+            count = 1
+            j = i + length
+            while j <= len(text) - length and text[j:j + length] == pattern:
+                count += 1
+                j += length
+            
+            # 如果重复2次以上，记录
+            if count >= 2:
+                duplicates.append({
+                    "pattern": pattern,
+                    "count": count,
+                    "position": i,
+                    "full_match": pattern * count,
+                })
+                i = j  # 跳过已检测的重复
+            else:
+                i += 1
+    
+    # 合并重叠的检测结果（优先保留更长的模式）
+    if not duplicates:
+        return []
+    
+    # 按位置排序
+    duplicates.sort(key=lambda x: x["position"])
+    
+    # 去重：如果两个模式有重叠，保留更长的
+    merged = []
+    for dup in duplicates:
+        if not merged:
+            merged.append(dup)
+        else:
+            last = merged[-1]
+            # 检查是否重叠
+            if dup["position"] < last["position"] + len(last["full_match"]):
+                # 重叠，保留更长的
+                if len(dup["full_match"]) > len(last["full_match"]):
+                    merged[-1] = dup
+            else:
+                merged.append(dup)
+    
+    return merged
+
+
+def fix_duplicate_text(text: str) -> str:
+    """修复文本中的重复字符或短语（如"乾坤乾坤乾坤" → "天地灵气"）。
+    
+    常见重复模式修复映射：
+    - "乾坤乾坤乾坤" → "天地灵气"（或其他合理替换）
+    - "精华精华精华" → "精华"
+    - "黑衣黑衣" → "黑衣"
+    """
+    if not text:
+        return text
+    
+    # 定义重复模式修复映射
+    duplicate_fixes = {
+        # 三字重复
+        "乾坤乾坤乾坤": "天地灵气",
+        "精华精华精华": "精华",
+        "黑衣黑衣黑衣": "黑衣",
+        "白衣白衣白衣": "白衣",
+        "青锋青锋青锋": "青锋",
+        "灵气灵气灵气": "灵气",
+        "剑气剑气剑气": "剑气",
+        "道法道法道法": "道法",
+        # 双字重复（可能更多）
+        "乾坤乾坤": "天地",
+        "精华精华": "精华",
+        "黑衣黑衣": "黑衣",
+        "白衣白衣": "白衣",
+        "青锋青锋": "青锋",
+        "灵气灵气": "灵气",
+        "剑气剑气": "剑气",
+        "道法道法": "道法",
+        # 其他常见重复
+        "天地天地灵气": "天地灵气",
+        "天地天地": "天地",
+    }
+    
+    result = text
+    # 按长度降序替换，避免短模式误匹配
+    for old, new in sorted(duplicate_fixes.items(), key=lambda x: len(x[0]), reverse=True):
+        if old in result:
+            result = result.replace(old, new)
+    
+    return result
 
 
 def format_entity_map_for_prompt(entity_map: Union[EntityMapFlat, EntityMapRich, None], max_per_category: int = 0) -> str:

@@ -140,8 +140,17 @@ def preload_chapter_anchors(input_dir: str, start_chapter: int, end_chapter: int
     return anchors
 
 def write_chapter_file(filepath, content):
-    """将内容写入章节文件"""
+    """将内容写入章节文件，并自动修复重复文本问题"""
     try:
+        # 导入重复文本修复函数
+        from entity_rewriter import fix_duplicate_text, detect_duplicate_text
+        
+        # 检测并修复重复文本
+        duplicates = detect_duplicate_text(content)
+        if duplicates:
+            print(f"  检测到 {len(duplicates)} 处重复文本，正在修复...")
+            content = fix_duplicate_text(content)
+        
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
