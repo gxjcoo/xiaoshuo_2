@@ -64,8 +64,44 @@ class WriteOutputTask(TaskNode):
             # 如果无法导入，跳过文本修复
             pass
         
-        # 构建输出内容
-        output_content = f"# {generated_title}\n\n{final_content}"
+        # 导入标题标准化函数
+        from llm.titles import normalize_chapter_title
+        
+        # 构建输出内容 - 检查 final_content 是否已包含标题，避免重复
+        final_content_stripped = final_content.strip()
+        if final_content_stripped.startswith("# "):
+            # final_content 已有标题（来自修订器），提取并标准化
+            lines = final_content_stripped.split("\n")
+            title_line = lines[0]  # "# 第二章 xxx"
+            title_text = title_line.lstrip("# ").strip()  # "第二章 xxx"
+            
+            # 获取正文内容用于提取副标题
+            body_lines = lines[1:]
+            # 跳过标题后的空行
+            while body_lines and not body_lines[0].strip():
+                body_lines = body_lines[1:]
+            body_content = "\n".join(body_lines)
+            
+            # 标准化标题格式（传入正文内容用于提取副标题）
+            normalized_title = normalize_chapter_title(title_text, chapter_number, body_content)
+            
+            # 如果正文第一行与标题相同（不带#），移除重复的标题
+            if body_lines and body_lines[0].strip() == title_text:
+                print(f"  检测到正文中重复标题，已移除: {title_text}")
+                body_lines = body_lines[1:]
+                # 跳过重复标题后的空行
+                while body_lines and not body_lines[0].strip():
+                    body_lines = body_lines[1:]
+            
+            # 重组内容
+            output_content = f"# {normalized_title}\n\n" + "\n".join(body_lines)
+            print(f"  使用标准化标题: {normalized_title}")
+        else:
+            # final_content 无标题，添加 generated_title
+            # 标准化 generated_title（传入正文内容用于提取副标题）
+            normalized_title = normalize_chapter_title(generated_title, chapter_number, final_content_stripped)
+            output_content = f"# {normalized_title}\n\n{final_content_stripped}"
+            print(f"  使用生成标题: {normalized_title}")
         
         # 写入文件
         os.makedirs(output_dir, exist_ok=True)

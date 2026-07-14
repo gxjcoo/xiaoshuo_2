@@ -434,6 +434,7 @@ def audit_and_revise_until_pass(
                 "句长同质化",
                 "段落等长",
                 "段尾总结腔",
+                "圆场解释腔过密",
             }
             needs_trace_rewrite = any(
                 isinstance(item, dict) and item.get("rule") in zhuque_sensitive_rules

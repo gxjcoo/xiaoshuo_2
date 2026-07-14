@@ -157,6 +157,9 @@ class ProgressTracker:
         
         # 更新主进度
         self.progress.update(self.main_task, advance=1)
+        
+        # 在 Rich 模式下也显示错误信息
+        self.console.print(f"  [bold red]✗ {task_id} 失败 ({duration:.1f}s):[/bold red] {error}")
 
     def stop_workflow(self):
         """停止进度追踪"""
@@ -216,7 +219,7 @@ class ProgressTracker:
                     task.get("name", ""),
                     status_display,
                     duration,
-                    note[:50] if note else ""
+                    note[:100] if note else ""
                 )
             
             self.console.print()

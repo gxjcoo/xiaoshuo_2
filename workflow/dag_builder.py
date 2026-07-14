@@ -61,7 +61,7 @@ def build_chapter_dag(
     dag.add_node(AuditReviseTask())
     dag.add_node(WriteOutputTask())
     
-    # 可选节点
+    # 可选节点：拆书
     if enable_decompose:
         if use_advanced_decompose:
             dag.add_node(DecomposeAdvancedTask())
@@ -74,6 +74,14 @@ def build_chapter_dag(
             dag.add_node(InjectProfileTask())
         # 手动添加 inject_profile 到 chapter_plan 的依赖
         dag.add_edge("inject_profile", "chapter_plan")
+    else:
+        # 即使拆书任务未在本次运行，如果 book_profile.json 已存在也要注入设定
+        import os
+        if os.path.exists("book_profile.json"):
+            inject_node = InjectProfileTask()
+            inject_node.deps = ["split_novel"]
+            dag.add_node(inject_node)
+            dag.add_edge("inject_profile", "chapter_plan")
     
     if enable_entity_rewrite:
         dag.add_node(EntityRewriteTask())
@@ -140,7 +148,16 @@ def build_full_dag(
         else:
             dag.add_node(DecomposeBookTask())
             dag.add_node(InjectProfileTask())
-    
+        # inject_profile 到 chapter_plan 的依赖（通过每章节点的依赖间接生效）
+        # 注意：inject_profile → chapter_plan 的依赖在 _create_chapter_nodes 中通过 global_task_ids 处理
+    else:
+        # 即使拆书任务未在本次运行，如果 book_profile.json 已存在也要注入设定
+        import os
+        if os.path.exists("book_profile.json"):
+            inject_node = InjectProfileTask()
+            inject_node.deps = ["split_novel"]
+            dag.add_node(inject_node)
+
     # 添加每章的处理节点
     for chapter_num in range(start_chapter, end_chapter + 1):
         # 确定前一章的输出任务
@@ -165,6 +182,15 @@ def build_full_dag(
         
         for node in chapter_nodes:
             dag.add_node(node)
+    
+    # 如果 inject_profile 存在，确保每章的 chapter_plan 依赖它
+    # _create_chapter_nodes 中 chapter_plan 的 base_deps 不包含 inject_profile，
+    # 所以需要在这里手动添加依赖边
+    if dag.get_node("inject_profile"):
+        for chapter_num in range(start_chapter, end_chapter + 1):
+            chapter_plan_id = f"chapter_plan_ch{chapter_num}"
+            if dag.get_node(chapter_plan_id):
+                dag.add_edge("inject_profile", chapter_plan_id)
     
     return dag
 

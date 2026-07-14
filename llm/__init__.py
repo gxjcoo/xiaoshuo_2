@@ -24,9 +24,9 @@ from .prompts import (
 from .outline_extract import extract_plot_outline_from_reference
 from .titles import (
     _normalize_title_subtitle,
-    _fallback_subtitle_from_content,
     _fallback_subtitle_from_reference,
     generate_title_from_chapter_content,
+    generate_short_title,
 )
 from .style_analysis import analyze_writing_style
 from .chapter_plan import plan_chapter_with_ai
@@ -44,9 +44,9 @@ __all__ = [
     "_chapter_completion_max_tokens",
     "extract_plot_outline_from_reference",
     "_normalize_title_subtitle",
-    "_fallback_subtitle_from_content",
     "_fallback_subtitle_from_reference",
     "generate_title_from_chapter_content",
+    "generate_short_title",
     "analyze_writing_style",
     "plan_chapter_with_ai",
     "analyze_hooks_and_volume_update",

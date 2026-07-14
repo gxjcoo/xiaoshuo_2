@@ -51,6 +51,12 @@ COGNITIVE_MARKERS = [
     "回忆", "琢磨", "理解", "推断", "复盘", "意味着", "所以", "因此",
 ]
 
+FORMAL_EXPLANATION_MARKERS = [
+    "据说", "总算", "反而", "徒增", "名正言顺", "不算棘手", "气运", "关窍", "后续",
+    "此乃", "可保", "日后", "务必", "只是", "也罢", "从此", "结果", "几乎",
+    "不为别的", "正是", "何愁", "何惧", "暂时无碍", "幸不辱命", "风险几乎为零",
+]
+
 EVENT_MARKERS = [
     "突然", "猛地", "冲", "砸", "打", "杀", "跪", "喊", "吼", "扑", "炸", "裂", "断", "死",
     "受伤", "战书", "系统", "任务", "解锁", "出现", "进攻", "偷袭", "逃", "追",
@@ -301,6 +307,27 @@ def _exposition_overflow_issue(paragraphs):
     return None
 
 
+def _formal_explanation_polish_issue(text):
+    """检测把动机、因果、结论都讲得过圆的官样解释腔。"""
+    text = text or ""
+    if len(text) < 900:
+        return None
+    counts = {m: text.count(m) for m in FORMAL_EXPLANATION_MARKERS}
+    hits = sum(counts.values())
+    unique_hits = len([m for m, c in counts.items() if c > 0])
+    density = hits / max(1, len(text) / 1000)
+    if density >= 4.2 and unique_hits >= 5:
+        detail = "、".join(f"{k}x{v}" for k, v in sorted(counts.items(), key=lambda x: -x[1]) if v > 0)[:90]
+        return {
+            "rule": "圆场解释腔过密",
+            "severity": "warning",
+            "description": f"检测到较多官样连接/结论词（{density:.2f}/千字），文本因果被解释得过于圆整，示例：{detail}。",
+            "suggestion": "删掉一部分“据说/总算/名正言顺/幸不辱命/风险几乎为零”等圆场词，把逻辑藏进动作、误判、半截对白和具体小算盘里。",
+            "span_hint": "解释与转场句",
+        }, 9
+    return None
+
+
 def _extract_dialogue_records(text):
     records = []
     # 通用说话人识别：仅从对话左侧近邻文本中抽取“2-6字中文词 + 说/喊/问/道”等模式
@@ -470,6 +497,12 @@ def analyze_ai_trace(text, recent_chapter_texts=None):
     exposition_res = _exposition_overflow_issue(paragraphs)
     if exposition_res:
         item, penalty = exposition_res
+        score_penalty += penalty
+        issues.append(item)
+
+    polish_res = _formal_explanation_polish_issue(text)
+    if polish_res:
+        item, penalty = polish_res
         score_penalty += penalty
         issues.append(item)
 

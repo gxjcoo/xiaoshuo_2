@@ -176,11 +176,13 @@ python -m workflow.cli run --input_dir chapters --chapter 1 --only style_analysi
 ```bash
 python combine_chapters.py chapters -o combined.md
 python rename_chapters.py chapters_out
+python fix_chapter_titles.py  # 修复输出章节的标题格式
 ```
 
 - `split_novel.py`：按 `第N章 标题`、`第N章：标题` 等格式切章，输出 `1.md`、`2.md`。
 - `combine_chapters.py`：按自然序合并目录内 `.md` 章节。
 - `rename_chapters.py`：将 `第十二章xxx.md` 这类文件名转换成 `12.md`。
+- `fix_chapter_titles.py`：修复输出章节的标题格式，确保所有标题统一为 `# 第{N}章 {标题}` 格式（支持中文数字转阿拉伯数字）。
 
 ## 工具脚本（scripts/）
 

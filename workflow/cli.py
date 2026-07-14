@@ -194,8 +194,28 @@ def cmd_run(args: argparse.Namespace):
     # 输出结果
     if summary.get("status") == "completed":
         print(f"\n工作流执行完成！")
+        # 显示日志文件位置
+        from .logger import workflow_logger
+        print(f"详细日志: {workflow_logger.get_log_file()}")
     else:
         print(f"\n工作流执行失败: {summary.get('status')}")
+        # 显示日志文件位置
+        from .logger import workflow_logger
+        print(f"详细日志: {workflow_logger.get_log_file()}")
+        # 显示失败任务详情
+        tasks = summary.get("tasks", {})
+        failed_tasks = [(k, v) for k, v in tasks.items() if v.get("status") == "failed"]
+        if failed_tasks:
+            print(f"\n失败任务 ({len(failed_tasks)} 个):")
+            print("=" * 60)
+            for task_id, task_info in failed_tasks:
+                error = task_info.get("error", "未知错误")
+                tb = task_info.get("traceback", "")
+                print(f"\n任务: {task_id}")
+                print(f"错误: {error}")
+                if tb:
+                    print(f"调用栈:\n{tb}")
+                print("-" * 60)
         sys.exit(1)
 
 
@@ -334,6 +354,12 @@ def cmd_status(args: argparse.Namespace):
     print(f"总耗时: {summary.get('total_duration', 0):.1f}s")
     print("-" * 50)
     
+    # 显示日志文件位置
+    from .logger import workflow_logger
+    log_file = workflow_logger.get_log_file()
+    if os.path.exists(log_file):
+        print(f"日志文件: {log_file}")
+    
     # 显示各任务状态
     tasks = existing.get("tasks", {})
     if tasks:
@@ -341,7 +367,26 @@ def cmd_status(args: argparse.Namespace):
         for task_id, task_info in tasks.items():
             status = task_info.get("status", "pending")
             duration = task_info.get("duration_seconds", 0)
-            print(f"  {task_id}: {status} ({duration:.1f}s)")
+            error = task_info.get("error", "")
+            status_display = f"{status} ({duration:.1f}s)"
+            if status == "failed" and error:
+                status_display += f" | 错误: {error}"
+            print(f"  {task_id}: {status_display}")
+        
+        # 显示失败任务的完整调用栈
+        failed_tasks = [(k, v) for k, v in tasks.items() if v.get("status") == "failed"]
+        if failed_tasks:
+            print("\n" + "=" * 60)
+            print("失败任务详情:")
+            print("=" * 60)
+            for task_id, task_info in failed_tasks:
+                error = task_info.get("error", "未知错误")
+                tb = task_info.get("traceback", "")
+                print(f"\n任务: {task_id}")
+                print(f"错误: {error}")
+                if tb:
+                    print(f"调用栈:\n{tb}")
+                print("-" * 60)
 
 
 def cmd_list(args: argparse.Namespace):

@@ -66,6 +66,12 @@ def _looks_like_meta_reasoning(text):
         "首先先",
         "先看",
         "我们先",
+        # MiMo-v2.5-pro 推理模型 reasoning_content 常见前缀
+        "首先，用户要求",
+        "首先，用户想要",
+        "用户要求我",
+        "用户想要我",
+        "用户希望我",
     )
     if any(head.startswith(p) for p in bad_prefixes):
         return True
@@ -103,7 +109,18 @@ def _call_openai_chat_api(messages, model, timeout, max_tokens=None, temperature
         if response_format is not None:
             kwargs["response_format"] = response_format
         response = client.chat.completions.create(**kwargs)
-        content = (response.choices[0].message.content or "").strip()
+        msg = response.choices[0].message
+        content = (msg.content or "").strip()
+        
+        # 记录推理模型的 token 使用情况（调试用）
+        if DEBUG_LLM_LOG and not content:
+            if hasattr(msg, 'reasoning_content') and msg.reasoning_content:
+                print(f"[LLM DEBUG] content 为空，reasoning_content 长度={len(msg.reasoning_content)}", flush=True)
+            if response.usage and hasattr(response.usage, 'completion_tokens_details'):
+                details = response.usage.completion_tokens_details
+                if details and hasattr(details, 'reasoning_tokens') and details.reasoning_tokens:
+                    print(f"[LLM DEBUG] reasoning_tokens={details.reasoning_tokens}, completion_tokens={response.usage.completion_tokens}", flush=True)
+        
         _debug_log_response(path_label, model, content)
         return content
 
@@ -298,5 +315,7 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
                 print(f"已达到最大重试次数 ({retries})，请求失败。", flush=True)
 
     if last_exception:
-        print(f"所有 API 调用尝试均失败。最后的错误: {str(last_exception)}", flush=True)
+        error_msg = f"所有 API 调用尝试均失败 ({retries} 次)。最后的错误: {str(last_exception)}"
+        print(error_msg, flush=True)
+        raise RuntimeError(error_msg) from last_exception
     return None

@@ -33,6 +33,7 @@ def generate_chapter_content(
     next_chapter_start="",
     entity_rewrite=False,
     entity_map=None,
+    book_profile=None,
 ):
     """使用 AI 生成新的章节内容。
 
@@ -104,6 +105,83 @@ def generate_chapter_content(
     core_items = current_context.get('core_items', [])
     core_elements = f"核心角色：{', '.join(core_characters) if core_characters else '无'}, 核心道具：{', '.join(core_items) if core_items else '无'}"
 
+    # 拆书核心设定块（硬约束：生成内容不可与这些设定冲突）
+    book_profile_block = ""
+    if book_profile and isinstance(book_profile, dict):
+        bp_lines = ["【拆书核心设定（硬约束：正文不可与以下设定冲突）】"]
+        
+        # 如果有实体映射，将设定中的原名替换为新名
+        def _apply_entity_rewrite_to_text(text, entity_map):
+            """将文本中的原书实体名替换为新名"""
+            if not text or not entity_map or not isinstance(entity_map, dict):
+                return text
+            result = str(text)
+            # 按原名长度降序替换，避免短名误吞长名
+            all_pairs = {}
+            for cat in ["characters", "places", "events", "objects_animals"]:
+                mapping = entity_map.get(cat, {}) or {}
+                if isinstance(mapping, dict):
+                    for old, new in mapping.items():
+                        if isinstance(old, str) and isinstance(new, str) and old and new and old != new:
+                            all_pairs[old] = new
+            for old in sorted(all_pairs.keys(), key=len, reverse=True):
+                result = result.replace(old, all_pairs[old])
+            return result
+        
+        # 世界观
+        ws = book_profile.get("world_setting", {})
+        if isinstance(ws, dict):
+            ws_desc = ws.get("description", "")
+            if ws_desc:
+                ws_desc = _apply_entity_rewrite_to_text(ws_desc, entity_map)
+                bp_lines.append(f"【世界观】{str(ws_desc)[:500]}")
+        elif isinstance(ws, str) and ws.strip():
+            ws = _apply_entity_rewrite_to_text(ws, entity_map)
+            bp_lines.append(f"【世界观】{ws[:500]}")
+        
+        # 主角
+        proto = book_profile.get("protagonist", {})
+        if isinstance(proto, dict):
+            proto_name = proto.get("name", "")
+            proto_desc = proto.get("description", "")
+            if proto_name:
+                proto_name = _apply_entity_rewrite_to_text(proto_name, entity_map)
+            if proto_desc:
+                proto_desc = _apply_entity_rewrite_to_text(proto_desc, entity_map)
+            if proto_name or proto_desc:
+                bp_lines.append(f"【主角】{proto_name}: {str(proto_desc)[:400]}")
+        elif isinstance(proto, str) and proto.strip():
+            proto = _apply_entity_rewrite_to_text(proto, entity_map)
+            bp_lines.append(f"【主角】{proto[:400]}")
+        
+        # 核心冲突
+        conflict = book_profile.get("core_conflict", "")
+        if conflict:
+            conflict = _apply_entity_rewrite_to_text(str(conflict), entity_map)
+            bp_lines.append(f"【核心冲突】{conflict[:400]}")
+        
+        # 力量体系
+        power = book_profile.get("power_system", "")
+        if power:
+            power = _apply_entity_rewrite_to_text(str(power), entity_map)
+            bp_lines.append(f"【力量体系】{power[:300]}")
+        
+        # 金手指
+        gf = book_profile.get("golden_finger", "")
+        if gf:
+            gf = _apply_entity_rewrite_to_text(str(gf), entity_map)
+            bp_lines.append(f"【金手指/特殊能力】{gf[:300]}")
+        
+        # 主要对手
+        antag = book_profile.get("antagonists", "")
+        if antag:
+            antag = _apply_entity_rewrite_to_text(str(antag), entity_map)
+            bp_lines.append(f"【主要对手/反派】{antag[:300]}")
+        
+        if len(bp_lines) > 1:  # 有实际内容
+            bp_lines.append("- 以上设定为本书核心基础，生成正文时不得与之矛盾。如需扩展必须在设定框架内。\n")
+            book_profile_block = "\n".join(bp_lines) + "\n"
+
     if strict_source_plot:
         production_hard_rules = (
             f"【成文忌口（同结构改编专用，从简）】\n"
@@ -152,6 +230,8 @@ def generate_chapter_content(
         "- 不要用旁白替角色贴标签：避免“这是他的固定习惯/专属小动作/标准性子/每句末尾总爱……”这类说明。让习惯自己出现，别解释它。\n"
         "- 口癖只能点到为止。同一段对白里同一个尾音最多 1-2 次，其余用停顿、吞字、动作和具体抱怨区分声线。\n"
         "- 设定交代不要连续三段平铺。能从动作看出来的别解释，必须交代时夹在人物正在做的事里。\n"
+        "- 少用“据说/总算/反而/徒增变数/名正言顺/不算棘手/伤及气运/幸不辱命/日后清净/风险几乎为零”这类把因果圆满讲清的官样词；同一处逻辑能让读者猜到，就留半截。\n"
+        "- 不要每个动作都补一条合理化说明。角色可以临时找借口、话说得不严谨、钱数前后有小心思，保留一点连载现场的毛边。\n"
         "- 保留一点粗糙边角：长短段混排，允许一句话没说满，避免每段都像完成了起承转合。\n\n"
     )
 
@@ -166,6 +246,7 @@ def generate_chapter_content(
             if next_head else ""
         )
         + f"【语言风格备忘（非提纲；禁止模仿下列编号、小标题或分析腔落笔）】\n{style_brief}\n\n"
+        f"{book_profile_block}"
         f"{current_context_summary}\n\n"
         f"{core_elements}\n\n"
         f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}"
@@ -181,7 +262,9 @@ def generate_chapter_content(
         f"1. **风格**：同结构改编也要像真人落笔；幽默从处境里长出来，不要为搞笑而堆梗。\n"
         f"2. **连贯**：人物反应符合参考中的当下压力；设定不与参考冲突。\n"
         f"3. **标题**：第 {chapter_number} 章单行标题，格式 `# 第{chapter_number}章 …` 置于最前。\n"
-        f"4. **字数**：约 {target_length} 字；允许语意跳跃，不必写满「说明」才算完成。\n"
+        f"4. **字数（硬约束）**：正文必须控制在 {int(target_length * 0.9)}-{int(target_length * 1.1)} 字之间（即{target_length}字±10%）。"
+        f"字数不足则情节仓促遗漏，字数超标则节奏拖沓。"
+        f"写作前先规划好场景数量和每个场景的篇幅分配，确保总量达标。\n"
         f"5. **表达**：对话/叙述/内心交替出现，但内心勿承担世界观说明书职能。\n"
         f"6. **系统/UI**：用打断、误触、半句播报或动作衔接，避免连发同一腔调提示框。\n\n"
     )
@@ -314,6 +397,9 @@ def generate_chapter_content(
         new_content = f"# {generated_title}\n\n{body_text}" if body_text else f"# {generated_title}\n"
 
         return new_content
+    except RuntimeError:
+        # LLM调用失败（所有重试均失败），向上传播
+        raise
     except Exception as e:
         print(f"生成新章节内容时发生错误: {e}")
         return None

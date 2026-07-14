@@ -194,8 +194,11 @@ class InjectProfileTask(TaskNode):
         }
 
     def validate_inputs(self, context: Dict[str, Any]) -> bool:
-        # 需要 book_profile 或 book_profile_path
-        return "book_profile" in context or "book_profile_path" in context
+        # 需要 book_profile 或 book_profile_path，或者 book_profile.json 文件已存在
+        if "book_profile" in context or "book_profile_path" in context:
+            return True
+        # 允许从默认路径 book_profile.json 加载
+        return os.path.exists("book_profile.json")
 
     def get_required_keys(self) -> list:
         return ["book_profile"]

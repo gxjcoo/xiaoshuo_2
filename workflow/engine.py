@@ -9,12 +9,14 @@ DAG 引擎核心 - 有向无环图管理和工作流执行
 """
 
 import json
+import traceback
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional, Set, Type
 
 from .base import TaskNode
 from .state import StateStore
 from .progress import ProgressTracker
+from .logger import workflow_logger
 
 
 class DAG:
@@ -258,6 +260,7 @@ class WorkflowEngine:
         # 开始进度追踪
         dag_tree = self._build_dag_tree()
         self.progress.start_workflow(len(execution_order), dag_tree)
+        workflow_logger.workflow_start(len(execution_order))
         
         # 执行任务
         for task_id in execution_order:
@@ -297,16 +300,20 @@ class WorkflowEngine:
             # 执行任务
             self.progress.start_task(task_id, node.name)
             self.state.update_task_status(task_id, "running")
+            workflow_logger.task_start(task_id, node.name)
             
             # 任务级重试：API间歇性失败时自动重试
             max_task_retries = 3
             task_retry_delay = 15  # 秒
             task_success = False
+            error_msg = ""
+            error_tb = ""
             
             for task_attempt in range(max_task_retries):
                 try:
                     if task_attempt > 0:
                         print(f"  任务重试 ({task_attempt + 1}/{max_task_retries})，等待 {task_retry_delay} 秒...", flush=True)
+                        workflow_logger.task_retry(task_id, task_attempt + 1, max_task_retries, task_retry_delay)
                         import time
                         time.sleep(task_retry_delay)
                         task_retry_delay *= 2  # 指数退避
@@ -321,16 +328,26 @@ class WorkflowEngine:
                     break
                 except Exception as e:
                     error_msg = str(e)
+                    error_tb = traceback.format_exc()
                     if task_attempt < max_task_retries - 1:
                         print(f"  任务失败 (尝试 {task_attempt + 1}/{max_task_retries}): {error_msg}", flush=True)
                         print(f"  将在 {task_retry_delay} 秒后重试...", flush=True)
+                        workflow_logger.task_fail(task_id, error_msg)
                     else:
                         print(f"  任务失败，已达最大重试次数: {error_msg}", flush=True)
+                        print(f"  完整调用栈:\n{error_tb}", flush=True)
+                        workflow_logger.task_fail(task_id, error_msg, error_tb)
             
             if not task_success:
                 self.state.update_task_status(task_id, "failed", error=error_msg)
                 self.progress.fail_task(task_id, error_msg)
                 self.state.set_overall_status("failed")
+                workflow_logger.workflow_end(
+                    "failed",
+                    len([1 for v in self.state.state.get("tasks", {}).values() if v.get("status") == "completed"]),
+                    len([1 for v in self.state.state.get("tasks", {}).values() if v.get("status") == "failed"]),
+                    0
+                )
                 self.progress.stop_workflow()
                 return self.state.get_summary()
         
@@ -342,6 +359,12 @@ class WorkflowEngine:
         summary = self.state.get_summary()
         task_details = self._collect_task_details()
         self.progress.display_summary(summary, task_details)
+        workflow_logger.workflow_end(
+            "completed",
+            summary.get("completed", 0),
+            summary.get("failed", 0),
+            summary.get("total_duration", 0)
+        )
         
         return summary
 
