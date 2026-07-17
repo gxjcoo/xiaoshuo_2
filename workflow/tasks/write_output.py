@@ -26,13 +26,15 @@ class WriteOutputTask(TaskNode):
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         执行写入操作
-        
+
         输入：
             - chapter_number: 当前章节号
             - final_content: 最终内容
             - generated_title: 章节标题
             - output_dir: 输出目录
-            
+            - entity_map: 实体映射（可选）
+            - entity_rewrite_enabled: 是否启用实体改写
+
         输出：
             - output_path: 输出文件路径
         """
@@ -40,9 +42,25 @@ class WriteOutputTask(TaskNode):
         final_content = context.get("final_content")
         generated_title = context.get("generated_title", f"第{chapter_number}章")
         output_dir = context.get("output_dir", "output_chapters")
-        
+        entity_map = context.get("entity_map")
+        entity_rewrite_enabled = context.get("entity_rewrite_enabled", True)
+
         if not final_content:
             raise ValueError("没有内容可写入")
+
+        # 写盘前实体改写：强制把任何残留原名替换为新名
+        if entity_rewrite_enabled and entity_map:
+            from entity_rewriter import apply_entity_rewrite, detect_original_entity_leaks, format_entity_leak_report
+            leaks = detect_original_entity_leaks(final_content, entity_map)
+            if leaks:
+                print(f"  写盘前发现 {len(leaks)} 个原名残留，执行硬替换：")
+                print(format_entity_leak_report(leaks))
+                final_content = apply_entity_rewrite(final_content, entity_map)
+                leaks_after = detect_original_entity_leaks(final_content, entity_map)
+                if leaks_after:
+                    print(f"  警告：硬替换后仍残留 {len(leaks_after)} 项")
+                else:
+                    print("  硬替换完成，已无原名残留。")
         
         # 修复重复文本问题
         try:

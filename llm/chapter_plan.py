@@ -2,7 +2,7 @@
 
 import json
 
-from config import CHAPTER_GENERATION_MODEL
+from config import CHAPTER_GENERATION_MODEL, TRUNCATE_NEXT_CHAPTER
 
 from .client import call_deepseek_api
 from .prompts import _reference_prose_snippet
@@ -20,7 +20,7 @@ def plan_chapter_with_ai(
     """生成本章意图规划（短文本），用于约束正文生成焦点。"""
     context_json = json.dumps(current_context, ensure_ascii=False, indent=2)
     previous_tail = (previous_chapter_content or "")[-1200:]
-    next_head = (next_chapter_preview or "")[:1600]
+    next_head = (next_chapter_preview or "")[:TRUNCATE_NEXT_CHAPTER]
     ref_snip = ""
     strict_head = ""
     if strict_source_plot and (reference_chapter_text or "").strip():

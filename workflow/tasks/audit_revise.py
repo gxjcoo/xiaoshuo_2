@@ -113,7 +113,9 @@ class AuditReviseTask(TaskNode):
         
         return {
             "final_content": final_content,
-            "audit_report": audit_report
+            "audit_report": audit_report,
+            "entity_map": entity_map,
+            "entity_rewrite_enabled": entity_rewrite_enabled,
         }
 
     def validate_inputs(self, context: Dict[str, Any]) -> bool:
@@ -123,4 +125,4 @@ class AuditReviseTask(TaskNode):
         return ["chapter_number", "generated_content"]
 
     def get_output_keys(self) -> list:
-        return ["final_content", "audit_report"]
+        return ["final_content", "audit_report", "entity_map", "entity_rewrite_enabled"]

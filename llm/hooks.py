@@ -2,7 +2,7 @@
 
 import json
 
-from config import CONTEXT_ANALYSIS_MODEL, VOLUME_CHAPTER_SIZE
+from config import CONTEXT_ANALYSIS_MODEL, VOLUME_CHAPTER_SIZE, TRUNCATE_HOOKS
 
 from .client import call_deepseek_api
 
@@ -26,7 +26,7 @@ def analyze_hooks_and_volume_update(current_context, chapter_content, chapter_nu
         "- 用短语表达线索，避免整句复述。\n"
         f"- 当前章节号: {chapter_number}，分卷边界: {'是' if volume_boundary else '否'}。\n\n"
         f"【当前状态片段】\n{json.dumps(context_slice, ensure_ascii=False, indent=2)}\n\n"
-        f"【本章内容】\n{chapter_content[:7000]}"
+        f"【本章内容】\n{chapter_content[:TRUNCATE_HOOKS]}"
     )
     messages = [
         {"role": "system", "content": "你擅长抽取连载线索状态并维护分卷摘要，输出必须是合法 JSON 对象。"},
@@ -52,5 +52,6 @@ def analyze_hooks_and_volume_update(current_context, chapter_content, chapter_nu
             "resolved_hooks": [x for x in parsed.get("resolved_hooks", []) if isinstance(x, str) and x.strip()],
             "volume_summary": parsed.get("volume_summary", "").strip() if isinstance(parsed.get("volume_summary", ""), str) else "",
         }
-    except Exception:
+    except Exception as e:
+        print(f"警告：伏笔提取 JSON 解析失败: {e}", flush=True)
         return {"new_hooks": [], "resolved_hooks": [], "volume_summary": ""}

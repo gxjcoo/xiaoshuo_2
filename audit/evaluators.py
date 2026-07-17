@@ -8,6 +8,7 @@ import re
 
 from ai_handler import call_deepseek_api
 from ai_trace_rules import analyze_ai_trace
+from config import TRUNCATE_EVALUATOR_RULES, TRUNCATE_EVALUATOR_FIDELITY
 
 
 def evaluate_plot_fidelity_with_outline(
@@ -38,7 +39,7 @@ def evaluate_plot_fidelity_with_outline(
         "- 0-59：改变主线结构、反转关键因果、替换结局功能或新增破坏结构的大事件。\n"
         f"- pass 仅当 score >= {min_score} 且无关键剧情反转时为 true。\n\n"
         f"【结构功能骨架】\n```json\n{reference_plot_outline}\n```\n\n"
-        f"【生成稿】\n{chapter_content[:10000]}"
+        f"【生成稿】\n{chapter_content[:TRUNCATE_EVALUATOR_FIDELITY]}"
     )
     messages = [
         {"role": "system", "content": "你是严格的结构一致性审计器，只检查结构骨架覆盖，不评价文采。输出合法 JSON。"},
@@ -77,7 +78,8 @@ def evaluate_plot_fidelity_with_outline(
             "issues": issues,
             "suggestions": suggestions if isinstance(suggestions, list) else [],
         }
-    except Exception:
+    except Exception as e:
+        print(f"警告：结构骨架审计失败: {e}", flush=True)
         return {"score": 0, "pass": False, "issues": ["结构骨架审计 JSON 解析失败"], "suggestions": []}
 
 
@@ -229,7 +231,7 @@ def evaluate_chapter_with_rules(
         f"规则如下：\n{rules_json}\n\n"
         f"【本章意图】\n{chapter_plan_text if chapter_plan_text else '无'}\n\n"
         f"【近期焦点】\n{current_focus_text if current_focus_text else '无'}\n\n"
-        f"【正文】\n{chapter_content[:9000]}"
+        f"【正文】\n{chapter_content[:TRUNCATE_EVALUATOR_RULES]}"
     )
     messages = [
         {"role": "system", "content": "你是严格的小说审计评分器，输出必须是合法 JSON。"},

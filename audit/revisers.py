@@ -12,6 +12,53 @@ from ai_handler import call_deepseek_api
 from .metrics import _basic_style_metrics
 
 
+def _normalize_revised_output(revised: str, chapter_number: int, original_title: str) -> str:
+    """统一处理修订后输出：提取标题、规范化、重组。
+
+    Args:
+        revised: LLM 返回的修订后文本
+        chapter_number: 章节号
+        original_title: 原始标题（LLM 未返回标题时使用）
+
+    Returns:
+        规范化后的文本，格式为 "# 标题\n\n正文"
+    """
+    from llm.titles import normalize_chapter_title
+
+    if not revised or not revised.strip():
+        return revised
+
+    revised = revised.strip()
+
+    # 提取正文内容用于副标题提取
+    body_content = ""
+    has_title = revised.startswith("# ")
+
+    if has_title:
+        lines = revised.split("\n")
+        body_lines = lines[1:]
+        while body_lines and not body_lines[0].strip():
+            body_lines = body_lines[1:]
+        body_content = "\n".join(body_lines)
+    else:
+        body_content = revised
+
+    # 标准化标题格式
+    if has_title:
+        lines = revised.split("\n")
+        title_text = lines[0].lstrip("# ").strip()
+        normalized_title = normalize_chapter_title(title_text, chapter_number, body_content)
+        body_lines = lines[1:]
+        while body_lines and not body_lines[0].strip():
+            body_lines = body_lines[1:]
+        return f"# {normalized_title}\n\n" + "\n".join(body_lines)
+    elif original_title:
+        normalized_title = normalize_chapter_title(original_title, chapter_number, body_content)
+        return f"# {normalized_title}\n\n{revised}"
+
+    return revised
+
+
 def revise_for_plot_fidelity(
     reference_plot_outline,
     chapter_content,
@@ -58,37 +105,7 @@ def revise_for_plot_fidelity(
     )
     if not revised:
         return chapter_content
-    revised = revised.strip()
-    
-    # 导入标题标准化函数
-    from llm.titles import normalize_chapter_title
-    
-    # 获取正文内容用于提取副标题
-    body_content = ""
-    if revised.startswith("# "):
-        lines = revised.split("\n")
-        body_lines = lines[1:]
-        while body_lines and not body_lines[0].strip():
-            body_lines = body_lines[1:]
-        body_content = "\n".join(body_lines)
-    else:
-        body_content = revised
-    
-    # 标准化标题格式（传入正文内容用于提取副标题）
-    if revised.startswith("# "):
-        lines = revised.split("\n")
-        title_text = lines[0].lstrip("# ").strip()
-        normalized_title = normalize_chapter_title(title_text, chapter_number, body_content)
-        body_lines = lines[1:]
-        while body_lines and not body_lines[0].strip():
-            body_lines = body_lines[1:]
-        revised = f"# {normalized_title}\n\n" + "\n".join(body_lines)
-    elif original_title:
-        # 确保有标题：如果 LLM 没返回标题，用原标题
-        normalized_title = normalize_chapter_title(original_title, chapter_number, body_content)
-        revised = f"# {normalized_title}\n\n{revised}"
-    
-    return revised
+    return _normalize_revised_output(revised.strip(), chapter_number, original_title)
 
 
 def rewrite_for_expression_distance(
@@ -145,37 +162,7 @@ def rewrite_for_expression_distance(
     )
     if not rewritten:
         return chapter_content
-    rewritten = rewritten.strip()
-    
-    # 导入标题标准化函数
-    from llm.titles import normalize_chapter_title
-    
-    # 获取正文内容用于提取副标题
-    body_content = ""
-    if rewritten.startswith("# "):
-        lines = rewritten.split("\n")
-        body_lines = lines[1:]
-        while body_lines and not body_lines[0].strip():
-            body_lines = body_lines[1:]
-        body_content = "\n".join(body_lines)
-    else:
-        body_content = rewritten
-    
-    # 标准化标题格式（传入正文内容用于提取副标题）
-    if rewritten.startswith("# "):
-        lines = rewritten.split("\n")
-        title_text = lines[0].lstrip("# ").strip()
-        normalized_title = normalize_chapter_title(title_text, chapter_number, body_content)
-        body_lines = lines[1:]
-        while body_lines and not body_lines[0].strip():
-            body_lines = body_lines[1:]
-        rewritten = f"# {normalized_title}\n\n" + "\n".join(body_lines)
-    elif original_title:
-        # 确保有标题：如果 LLM 没返回标题，用原标题
-        normalized_title = normalize_chapter_title(original_title, chapter_number, body_content)
-        rewritten = f"# {normalized_title}\n\n{rewritten}"
-    
-    return rewritten
+    return _normalize_revised_output(rewritten.strip(), chapter_number, original_title)
 
 
 def anti_ai_rewrite_with_reference(
@@ -262,37 +249,7 @@ def anti_ai_rewrite_with_reference(
     )
     if not rewritten:
         return chapter_content
-    rewritten = rewritten.strip()
-    
-    # 导入标题标准化函数
-    from llm.titles import normalize_chapter_title
-    
-    # 获取正文内容用于提取副标题
-    body_content = ""
-    if rewritten.startswith("# "):
-        lines = rewritten.split("\n")
-        body_lines = lines[1:]
-        while body_lines and not body_lines[0].strip():
-            body_lines = body_lines[1:]
-        body_content = "\n".join(body_lines)
-    else:
-        body_content = rewritten
-    
-    # 标准化标题格式（传入正文内容用于提取副标题）
-    if rewritten.startswith("# "):
-        lines = rewritten.split("\n")
-        title_text = lines[0].lstrip("# ").strip()
-        normalized_title = normalize_chapter_title(title_text, chapter_number, body_content)
-        body_lines = lines[1:]
-        while body_lines and not body_lines[0].strip():
-            body_lines = body_lines[1:]
-        rewritten = f"# {normalized_title}\n\n" + "\n".join(body_lines)
-    elif original_title:
-        # 确保有标题：如果 LLM 没返回标题，用原标题
-        normalized_title = normalize_chapter_title(original_title, chapter_number, body_content)
-        rewritten = f"# {normalized_title}\n\n{rewritten}"
-    
-    return rewritten
+    return _normalize_revised_output(rewritten.strip(), chapter_number, original_title)
 
 
 def revise_chapter_by_audit_feedback(
@@ -354,34 +311,4 @@ def revise_chapter_by_audit_feedback(
     )
     if not revised:
         return chapter_content
-    revised = revised.strip()
-    
-    # 导入标题标准化函数
-    from llm.titles import normalize_chapter_title
-    
-    # 获取正文内容用于提取副标题
-    body_content = ""
-    if revised.startswith("# "):
-        lines = revised.split("\n")
-        body_lines = lines[1:]
-        while body_lines and not body_lines[0].strip():
-            body_lines = body_lines[1:]
-        body_content = "\n".join(body_lines)
-    else:
-        body_content = revised
-    
-    # 标准化标题格式（传入正文内容用于提取副标题）
-    if revised.startswith("# "):
-        lines = revised.split("\n")
-        title_text = lines[0].lstrip("# ").strip()
-        normalized_title = normalize_chapter_title(title_text, chapter_number, body_content)
-        body_lines = lines[1:]
-        while body_lines and not body_lines[0].strip():
-            body_lines = body_lines[1:]
-        revised = f"# {normalized_title}\n\n" + "\n".join(body_lines)
-    elif original_title:
-        # 确保有标题：如果 LLM 没返回标题，用原标题
-        normalized_title = normalize_chapter_title(original_title, chapter_number, body_content)
-        revised = f"# {normalized_title}\n\n{revised}"
-    
-    return revised
+    return _normalize_revised_output(revised.strip(), chapter_number, original_title)

@@ -85,7 +85,9 @@ def build_chapter_dag(
     
     if enable_entity_rewrite:
         dag.add_node(EntityRewriteTask())
-    
+        # entity_rewrite 是 chapter_plan 的可选依赖
+        dag.add_edge("entity_rewrite", "chapter_plan")
+
     if enable_context_update:
         dag.add_node(UpdateContextTask())
     
@@ -280,19 +282,26 @@ def _create_chapter_nodes(
             return self.task.get_output_keys()
     
     nodes = []
-    
+
     # 风格分析节点
     nodes.append(ChapterTaskWrapper(StyleAnalysisTask(), chapter_number))
-    
+
     # 骨架抽取节点
     nodes.append(ChapterTaskWrapper(OutlineExtractTask(), chapter_number))
-    
+
     # 实体改写节点（可选）
     if enable_entity_rewrite:
         nodes.append(ChapterTaskWrapper(EntityRewriteTask(), chapter_number))
-    
-    # 意图规划节点
-    nodes.append(ChapterTaskWrapper(ChapterPlanTask(), chapter_number))
+
+    # 意图规划节点（entity_rewrite 启用时需要依赖它以获取 entity_map）
+    chapter_plan_task = ChapterPlanTask()
+    if enable_entity_rewrite:
+        # 动态添加 entity_rewrite 依赖，确保 entity_map 传递到下游
+        base_deps = list(chapter_plan_task.deps)
+        if "entity_rewrite" not in base_deps:
+            base_deps.append("entity_rewrite")
+        chapter_plan_task._deps_override = base_deps
+    nodes.append(ChapterTaskWrapper(chapter_plan_task, chapter_number))
     
     # 正文生成节点
     nodes.append(ChapterTaskWrapper(ContentGenerateTask(), chapter_number))
@@ -338,7 +347,7 @@ def get_dag_description(enable_decompose: bool = True, use_advanced_decompose: b
         "style_analysis": ["split_novel"],
         "outline_extract": ["split_novel"],
         "entity_rewrite": ["split_novel"],
-        "chapter_plan": ["style_analysis", "outline_extract", "entity_rewrite"],
+        "chapter_plan": ["style_analysis", "outline_extract"],
         "content_generate": ["chapter_plan"],
         "audit_revise": ["content_generate"],
         "continuity_check": ["audit_revise"],

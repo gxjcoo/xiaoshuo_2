@@ -16,6 +16,22 @@ from config import (
 )
 from ai_handler import analyze_context_with_ai, analyze_hooks_and_volume_update
 
+# API 错误/拒绝文本标记，用于过滤无效内容
+_ERROR_MARKERS = [
+    "request was rejected", "Invalid API Key", "rate limit",
+    "Error code:", "high risk", "请提供有效的 API Key",
+    "所有 API 调用尝试均失败", "maximum context length",
+]
+
+
+def _is_valid_summary(text: str) -> bool:
+    """检查文本是否是有效的剧情摘要（非 API 错误信息）。"""
+    if not text or not text.strip():
+        return False
+    lower = text.lower()
+    return not any(marker.lower() in lower for marker in _ERROR_MARKERS)
+
+
 # 全局变量，存储当前加载的故事上下文
 story_context = {}
 
@@ -112,89 +128,75 @@ def load_story_context():
             return story_context
 
 def save_story_context():
-    """保存故事上下文，并在需要时同步修剪旧条目到存档文件以控制大小"""
+    """保存故事上下文，并在需要时同步修剪旧条目到存档文件以控制大小。
+
+    优化：批量收集可移除项后一次性删除，避免每次删除一个条目就重新序列化整个 context。
+    """
     global story_context
     removed_items_archive = {
         "protagonist_info": {"key_items_abilities": [], "key_relationships": {}},
         "world_setting": {"key_elements": []}
-    } 
+    }
     total_removed_count = 0
 
     try:
-        # 循环修剪直到大小符合要求
-        while True:
-            current_bytes = len(json.dumps(story_context, ensure_ascii=False).encode('utf-8'))
-            if current_bytes <= MAX_CONTEXT_BYTES:
-                break 
+        # 快速检查：序列化一次判断是否需要修剪
+        current_bytes = len(json.dumps(story_context, ensure_ascii=False).encode('utf-8'))
 
-            items_pruned_this_iteration = 0
-            
-            # 尝试从 key_items_abilities 删除，但不删除 core_characters 和 core_items
-            # 只有超过15个项目时才删除
+        if current_bytes > MAX_CONTEXT_BYTES:
+            core_items = set(story_context.get('core_items', []))
+            core_characters = set(story_context.get('core_characters', []))
+
+            # 批量收集可移除的 abilities（保留最近 15 个 + 核心项）
             abilities_list = story_context.get('protagonist_info', {}).get('key_items_abilities', [])
-            core_items = story_context.get('core_items', [])
-            core_characters = story_context.get('core_characters', [])
-            
-            if len(abilities_list) > 15:  # 修改：只有超过15个时才删除
-                for item in abilities_list[:]:
+            if len(abilities_list) > 15:
+                keep_count = 15
+                # 从前往后找可移除项，直到保留数量足够
+                removable_indices = []
+                for i, item in enumerate(abilities_list):
                     if item not in core_items and item not in core_characters:
-                        removed_ability = abilities_list.pop(abilities_list.index(item))
-                        removed_items_archive["protagonist_info"]["key_items_abilities"].append(removed_ability)
-                        items_pruned_this_iteration += 1
+                        removable_indices.append(i)
+                    if len(abilities_list) - len(removable_indices) <= keep_count:
                         break
+                # 从后往前移除（避免索引偏移）
+                for i in sorted(removable_indices, reverse=True):
+                    removed_items_archive["protagonist_info"]["key_items_abilities"].append(abilities_list[i])
+                    abilities_list.pop(i)
+                    total_removed_count += 1
 
-            # 尝试从 key_relationships 删除 (删除第一个键值对)，但不删除核心配角
-            # 只有超过15个关系时才删除
+            # 批量收集可移除的 relationships
             relationships_dict = story_context.get('protagonist_info', {}).get("key_relationships", {})
-            core_characters = story_context.get('core_characters', [])
-            
-            if len(relationships_dict) > 15:  # 修改：只有超过15个时才删除
-                # 遍历找到第一个不是核心配角的关系
-                for key in list(relationships_dict.keys()):
-                    if key not in core_characters:
-                        removed_relation_value = relationships_dict.pop(key)
-                        removed_items_archive["protagonist_info"]["key_relationships"][key] = removed_relation_value
-                        items_pruned_this_iteration += 1
-                        break
-                
-            # 尝试从 key_elements 删除，但不删除与核心道具相关的元素
-            # 只有超过15个元素时才删除
+            if len(relationships_dict) > 15:
+                removable_keys = [k for k in relationships_dict if k not in core_characters]
+                remove_count = len(relationships_dict) - 15
+                for key in removable_keys[:remove_count]:
+                    removed_items_archive["protagonist_info"]["key_relationships"][key] = relationships_dict.pop(key)
+                    total_removed_count += 1
+
+            # 批量收集可移除的 elements
             elements_list = story_context.get('world_setting', {}).get('key_elements', [])
-            core_items = story_context.get('core_items', [])
-            
-            if len(elements_list) > 15:  # 修改：只有超过15个时才删除
-                for element in elements_list[:]:
-                    # 检查元素是否与核心道具相关（简单检查是否包含核心道具的名称）
-                    is_core_related = False
-                    for core_item in core_items:
-                        if core_item in element:
-                            is_core_related = True
-                            break
-                    
+            if len(elements_list) > 15:
+                removable_indices = []
+                for i, element in enumerate(elements_list):
+                    is_core_related = any(ci in element for ci in core_items)
                     if not is_core_related:
-                        removed_element = elements_list.pop(elements_list.index(element))
-                        removed_items_archive["world_setting"]["key_elements"].append(removed_element)
-                        items_pruned_this_iteration += 1
+                        removable_indices.append(i)
+                    if len(elements_list) - len(removable_indices) <= 15:
                         break
+                for i in sorted(removable_indices, reverse=True):
+                    removed_items_archive["world_setting"]["key_elements"].append(elements_list[i])
+                    elements_list.pop(i)
+                    total_removed_count += 1
 
-            if items_pruned_this_iteration == 0:
-                print("警告：上下文大小超限，但所有可修剪列表/字典均已为最小保留数量（15个）或与核心内容相关，无法进一步减小。")
-                break 
-                
-            total_removed_count += items_pruned_this_iteration
-            # 重新计算大小，继续循环判断
-
-        # --- 如果有条目被删除，则更新存档文件 --- 
-        if total_removed_count > 0:
-            print(f"上下文大小超过 {MAX_CONTEXT_BYTES} 字节，已同步修剪 {total_removed_count} 个条目。")
-            _merge_removed_items_to_archive(removed_items_archive, total_removed_count)
-            # --- 存档逻辑结束 ---
+            # 修剪后重新检查大小
+            if total_removed_count > 0:
+                print(f"上下文大小超过 {MAX_CONTEXT_BYTES} 字节，已批量修剪 {total_removed_count} 个条目。")
+                _merge_removed_items_to_archive(removed_items_archive, total_removed_count)
 
         # 保存（可能已修剪的）上下文到主文件
         with open(CONTEXT_FILE, 'w', encoding='utf-8') as f:
             json.dump(story_context, f, ensure_ascii=False, indent=4)
-            # print(f"故事上下文已保存至 {CONTEXT_FILE}") 
-            
+
     except Exception as e:
         print(f"保存故事上下文 {CONTEXT_FILE} 时出错: {e}")
 
@@ -310,17 +312,21 @@ def update_story_context_after_chapter(
     # 获取最后3行非空内容
     summary_lines = non_empty_lines[-3:] if len(non_empty_lines) >= 3 else non_empty_lines
     chapter_tail_summary = "\n".join(summary_lines)
-    story_context["recent_plot_summary"] = chapter_tail_summary
-    print(f"已提取章节结尾作为摘要: {summary_lines}")
+    if _is_valid_summary(chapter_tail_summary):
+        story_context["recent_plot_summary"] = chapter_tail_summary
+        print(f"已提取章节结尾作为摘要: {summary_lines}")
+    else:
+        print(f"警告：章节结尾包含 API 错误文本，跳过摘要更新。内容预览: {chapter_tail_summary[:100]}")
 
     # 长连载增强：维护最近多章滚动摘要，提升跨章记忆保真度
     rolling = story_context.setdefault("recent_chapter_summaries", [])
     if not isinstance(rolling, list):
         rolling = []
-    rolling.append({
-        "chapter": chapter_number,
-        "summary": chapter_tail_summary
-    })
+    if _is_valid_summary(chapter_tail_summary):
+        rolling.append({
+            "chapter": chapter_number,
+            "summary": chapter_tail_summary
+        })
     # 仅保留最近 12 章，控制上下文膨胀
     story_context["recent_chapter_summaries"] = rolling[-12:]
     

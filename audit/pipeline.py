@@ -181,8 +181,8 @@ def audit_and_revise_until_pass(
     if not chapter_content:
         return {"passed": False, "content": chapter_content, "last_audit": {"total_score": 0}}
 
-    pass_threshold = int(rules.get("pass_threshold", 85))
-    ai_trace_hard_threshold = int(rules.get("ai_trace_hard_threshold", 80))
+    pass_threshold = int(rules.get("pass_threshold", 68))
+    ai_trace_hard_threshold = int(rules.get("ai_trace_hard_threshold", 50))
     max_rounds = int(rules.get("max_revise_rounds", ANTI_AI_MAX_ROUNDS))
     max_rounds = max(1, max_rounds)
     current = chapter_content

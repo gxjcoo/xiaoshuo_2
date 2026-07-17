@@ -7,6 +7,18 @@ from config import CONTEXT_ANALYSIS_MODEL
 from .client import call_deepseek_api
 from .prompts import _reference_prose_snippet
 
+# 大纲必需字段
+_OUTLINE_REQUIRED_FIELDS = {"chapter_goal", "scene_beats", "ending_state", "characters_present"}
+
+
+def _validate_outline(data: dict, chapter_number: int) -> bool:
+    """校验大纲 JSON 是否包含必需字段。"""
+    missing = _OUTLINE_REQUIRED_FIELDS - set(data.keys())
+    if missing:
+        print(f"警告：第{chapter_number}章大纲缺少字段: {missing}", flush=True)
+        return False
+    return True
+
 
 def extract_plot_outline_from_reference(reference_chapter_text, chapter_number, strict_source_plot=True):
     """从参考章抽取结构骨架，供生成阶段使用，避免直接贴原文导致高相似。"""
@@ -23,6 +35,7 @@ def extract_plot_outline_from_reference(reference_chapter_text, chapter_number, 
         '  "chapter_goal": string,\n'
         '  "scene_beats": [string],\n'
         '  "character_motives": [string],\n'
+        '  "characters_present": [string],\n'
         '  "must_keep_facts": [string],\n'
         '  "causal_chain": [string],\n'
         '  "ending_state": string,\n'
@@ -30,6 +43,7 @@ def extract_plot_outline_from_reference(reference_chapter_text, chapter_number, 
         "}\n\n"
         "规则：\n"
         "- scene_beats 按原文事件顺序列 5-10 条，每条只写事实，不写原文修辞。\n"
+        "- characters_present 列出本章实际出场的所有有名有姓的角色（含门派/势力名），不要遗漏。\n"
         "- must_keep_facts 只放改变结构功能会出错的信息点，避免把可改名的人名/地名当成硬约束。\n"
         "- 不要摘抄连续 12 个字以上的原文表达。\n"
         "- 不要输出正文、标题、修辞点评或 Markdown。\n"
@@ -54,6 +68,8 @@ def extract_plot_outline_from_reference(reference_chapter_text, chapter_number, 
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
             return raw.strip()
+        _validate_outline(parsed, chapter_number)
         return json.dumps(parsed, ensure_ascii=False, indent=2)
-    except Exception:
+    except Exception as e:
+        print(f"警告：大纲 JSON 解析失败，返回原始文本: {e}", flush=True)
         return raw.strip()

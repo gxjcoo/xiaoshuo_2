@@ -127,6 +127,19 @@ STYLE_ANALYSIS_TEMPERATURE = 0.05
 # 处理章节内容时传递给 AI 的最大字符数，防止输入过长
 MAX_CHAPTER_CONTENT_LENGTH = 6000
 
+# LLM 输入截断限制（字符数），各模块统一使用
+TRUNCATE_STYLE_ANALYSIS = 6000       # 风格分析输入
+TRUNCATE_CONTEXT_ANALYSIS = 6000     # 上下文分析输入
+TRUNCATE_HOOKS = 7000                # 伏笔提取输入
+TRUNCATE_EVALUATOR_RULES = 9000      # 规则审计输入
+TRUNCATE_EVALUATOR_FIDELITY = 10000  # 结构贴合审计输入
+TRUNCATE_PREVIOUS_CHAPTER = 1200     # 上一章结尾片段
+TRUNCATE_NEXT_CHAPTER = 1600         # 下一章开头预览
+TRUNCATE_TITLE_SNIPPET = 2600        # 标题提取用正文片段
+TRUNCATE_REFERENCE_EXCERPT = 5000    # 参考章摘录
+TRUNCATE_REVISION_STYLE = 1400       # 修订用风格摘要
+TRUNCATE_REVISION_REFERENCE = 1200   # 修订用参考章片段
+
 # 项目定位为「同结构改编」：严格跟 input 参考章结构骨架；衔接上一章读原作、生成后不把生成稿反写进设定。
 # 默认开启。实验/同人自由续写可设 STRICT_SOURCE_PLOT=0 或命令行 --no_strict_source_plot。
 STRICT_SOURCE_PLOT = os.environ.get("STRICT_SOURCE_PLOT", "1").strip() in {"1", "true", "True", "YES", "yes"}

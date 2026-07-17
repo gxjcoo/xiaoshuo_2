@@ -73,11 +73,23 @@ def generate_chapter_content(
     style_brief = _brief_style_for_generation(writing_style)
     next_head = (next_chapter_preview or "")[:1800].strip()
     reference_block = ""
+    characters_present_block = ""
     if reference_plot_outline:
         reference_block = (
             "【本章结构功能骨架（由参考章抽取；生成正文只能依据这些结构功能，不得复刻参考原文表达或实体体系）】\n"
             f"```json\n{reference_plot_outline}\n```\n\n"
         )
+        # 从骨架中提取出场角色列表，作为硬约束
+        try:
+            outline_data = json.loads(reference_plot_outline)
+            chars_present = outline_data.get("characters_present", [])
+            if chars_present and isinstance(chars_present, list):
+                characters_present_block = (
+                    "【本章出场角色（硬约束：正文中只允许出现以下角色，不得自行编造新角色）】\n"
+                    f"{', '.join(chars_present)}\n\n"
+                )
+        except (json.JSONDecodeError, AttributeError):
+            pass
     elif reference_chapter_text:
         fallback_ref = _reference_prose_snippet(reference_chapter_text, max_chars=900)
         reference_block = (
@@ -92,7 +104,8 @@ def generate_chapter_content(
             "2) 允许更换人物名、地点名、事件名、动物/物件名和局部承接方式；不得写入骨架中不存在的关键结构功能。\n"
             "3) 禁止沿用参考原文的连续句式、段落推进、开头落点、结尾收束方式和实体体系；同一功能事件必须换一种现场展开。\n"
             "4) 若近期焦点、JSON 上下文或本章意图与结构骨架冲突，一律以结构骨架为准。\n"
-            "5) 不得新增改变本章结构功能的支线或替换结局功能。\n\n"
+            "5) 不得新增改变本章结构功能的支线或替换结局功能。\n"
+            "6) 正文中只允许出现骨架中列出的角色，不得自行编造新角色或新增不在骨架中的势力。\n\n"
         )
     else:
         strict_plot_contract = (
@@ -112,7 +125,7 @@ def generate_chapter_content(
         
         # 如果有实体映射，将设定中的原名替换为新名
         def _apply_entity_rewrite_to_text(text, entity_map):
-            """将文本中的原书实体名替换为新名"""
+            """将文本中的原书实体名替换为新名（使用占位符防重复替换）"""
             if not text or not entity_map or not isinstance(entity_map, dict):
                 return text
             result = str(text)
@@ -124,8 +137,14 @@ def generate_chapter_content(
                     for old, new in mapping.items():
                         if isinstance(old, str) and isinstance(new, str) and old and new and old != new:
                             all_pairs[old] = new
-            for old in sorted(all_pairs.keys(), key=len, reverse=True):
-                result = result.replace(old, all_pairs[old])
+            placeholders = {}
+            for idx, old in enumerate(sorted(all_pairs.keys(), key=len, reverse=True)):
+                if old in result:
+                    placeholder = f"\x00RW{idx}\x00"
+                    placeholders[placeholder] = all_pairs[old]
+                    result = result.replace(old, placeholder)
+            for ph, final in placeholders.items():
+                result = result.replace(ph, final)
             return result
         
         # 世界观
@@ -177,7 +196,21 @@ def generate_chapter_content(
         if antag:
             antag = _apply_entity_rewrite_to_text(str(antag), entity_map)
             bp_lines.append(f"【主要对手/反派】{antag[:300]}")
-        
+
+        # 势力/门派（硬约束：不得自行编造势力名）
+        factions = book_profile.get("factions", [])
+        if factions and isinstance(factions, list):
+            faction_names = []
+            for f in factions:
+                if isinstance(f, dict):
+                    name = f.get("name", "")
+                    if name:
+                        faction_names.append(name)
+                elif isinstance(f, str):
+                    faction_names.append(f)
+            if faction_names:
+                bp_lines.append(f"【势力/门派（硬约束：正文中只允许使用以下势力名，不得编造新势力）】{', '.join(faction_names)}")
+
         if len(bp_lines) > 1:  # 有实际内容
             bp_lines.append("- 以上设定为本书核心基础，生成正文时不得与之矛盾。如需扩展必须在设定框架内。\n")
             book_profile_block = "\n".join(bp_lines) + "\n"
@@ -266,7 +299,14 @@ def generate_chapter_content(
         f"字数不足则情节仓促遗漏，字数超标则节奏拖沓。"
         f"写作前先规划好场景数量和每个场景的篇幅分配，确保总量达标。\n"
         f"5. **表达**：对话/叙述/内心交替出现，但内心勿承担世界观说明书职能。\n"
-        f"6. **系统/UI**：用打断、误触、半句播报或动作衔接，避免连发同一腔调提示框。\n\n"
+        f"6. **系统/UI**：用打断、误触、半句播报或动作衔接，避免连发同一腔调提示框。\n"
+        f"7. **比喻密度（硬约束）**：每 500 字最多 2 个比喻（含明喻、暗喻、「像…似的」「仿佛」）。"
+        f"禁止同一比喻重复使用（如「破风箱」只许出现 1 次）。"
+        f"禁止「仿佛」「宛如」「好似」连续出现在相邻两句中。\n"
+        f"8. **禁止紫色散文**：不要为描写而描写；场景描写服务于情节推进，不是展示文采。"
+        f"禁止「茶是明前龙井，水温刚好，叶片在盏里沉浮的样子，像极了某种隐喻」这类无叙事功能的炫技句。\n"
+        f"9. **动作驱动**：优先用动作和对话推进情节，减少静态氛围描写。"
+        f"每个场景至少有一个动作或事件发生，不要整段都是观察和感受。\n\n"
     )
 
     prompt_instruction = ""
@@ -322,12 +362,14 @@ def generate_chapter_content(
             " 例如：下一章开头是「妖道追杀」，本章结尾就应当是「妖道出现」，而不是「主角被抓」。\n\n"
         )
 
-    prompt = prompt_instruction + bidirectional_contract
+    prompt = characters_present_block + prompt_instruction + bidirectional_contract
     system_content = (
         "你是一位小说同结构改编作家：依据结构骨架输出同一功能链的新正文，语气有松有紧、句子有长有短，拒绝范文腔。"
         "不是自由续写、不是扩写新故事线、不是同人另起炉灶；提示中的分析/意图是备忘，禁止把提示结构映射成新章节大纲。"
         "必须主动避开参考原文的实体体系、句式骨架、段落推进、开头和结尾表达。"
         "禁止用「心里咯噔一下/不禁/这一刻/显然」等万能情绪套话收束段落。"
+        "比喻要克制，每 500 字最多 2 个；禁止同一比喻重复出现；禁止紫色散文和无叙事功能的炫技描写。"
+        "优先用动作和对话推进情节，减少静态氛围铺陈。"
     )
     if strict_source_plot:
         system_content += " 当前为严格结构适配：本章结构骨架即功能真值，可以换实体、表达和镜头承接，不可改结构功能。"

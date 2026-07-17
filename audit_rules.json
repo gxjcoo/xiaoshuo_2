@@ -16,7 +16,7 @@
     {
       "id": "continuity",
       "name": "剧情连贯性",
-      "weight": 0.1,
+      "weight": 0.09,
       "requirements": [
         "与上一章衔接自然，无明显跳轴",
         "因果链完整，关键事件可追溯",
@@ -26,7 +26,7 @@
     {
       "id": "plan_adherence",
       "name": "章节意图达成",
-      "weight": 0.08,
+      "weight": 0.07,
       "requirements": [
         "本章完成既定核心目标",
         "未偏离 chapter plan 的主冲突",
@@ -36,7 +36,7 @@
     {
       "id": "mainline_progress",
       "name": "主线推进",
-      "weight": 0.08,
+      "weight": 0.07,
       "requirements": [
         "本章对主线有实质推进",
         "避免纯填充或原地踏步",
@@ -46,7 +46,7 @@
     {
       "id": "character_consistency",
       "name": "角色一致性",
-      "weight": 0.09,
+      "weight": 0.08,
       "requirements": [
         "人物动机和行为与既有设定一致",
         "角色关系变化有依据",
@@ -56,7 +56,7 @@
     {
       "id": "dialogue_distinctiveness",
       "name": "对话区分度",
-      "weight": 0.06,
+      "weight": 0.05,
       "requirements": [
         "不同角色说话风格可区分",
         "对话具备口语节奏，不是统一书面腔",
@@ -66,7 +66,7 @@
     {
       "id": "world_consistency",
       "name": "世界观一致性",
-      "weight": 0.1,
+      "weight": 0.09,
       "requirements": [
         "术语使用统一，无自相矛盾",
         "地点、势力、规则前后一致"
@@ -107,7 +107,7 @@
     {
       "id": "pacing",
       "name": "节奏控制",
-      "weight": 0.08,
+      "weight": 0.07,
       "requirements": [
         "冲突-缓冲-推进节奏平衡",
         "信息释放不拖沓也不过爆",
@@ -159,7 +159,7 @@
     {
       "id": "readability",
       "name": "可读性",
-      "weight": 0.06,
+      "weight": 0.05,
       "requirements": [
         "段落结构清晰，阅读阻力低",
         "句长有变化，不单调",

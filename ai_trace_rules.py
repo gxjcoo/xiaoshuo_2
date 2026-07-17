@@ -393,6 +393,61 @@ def _voiceprint_gap_issue(text):
     return None
 
 
+def _simile_density_issue(text):
+    """检测比喻密度过高或同一比喻重复使用。"""
+    # 匹配常见比喻模式
+    simile_patterns = [
+        r"像[^，。！？\n]{2,20}[似的一样般]",
+        r"仿佛[^，。！？\n]{2,30}",
+        r"宛如[^，。！？\n]{2,30}",
+        r"好似[^，。！？\n]{2,30}",
+        r"如同[^，。！？\n]{2,30}",
+    ]
+    all_similes = []
+    for pattern in simile_patterns:
+        matches = re.findall(pattern, text)
+        all_similes.extend(matches)
+
+    total_chars = len(text)
+    if total_chars < 500:
+        return None
+
+    # 比喻密度：每 500 字超过 4 个比喻
+    density = len(all_similes) / (total_chars / 500)
+    if density > 4.0:
+        return {
+            "rule": "比喻密度过高",
+            "severity": "warning",
+            "description": f"全文 {total_chars} 字，检测到 {len(all_similes)} 个比喻（密度 {density:.1f}/500字），超过阈值 4。",
+            "suggestion": "删除或替换部分比喻，每 500 字控制在 2 个以内。优先保留与情节推进相关的比喻，删除纯氛围装饰性比喻。",
+            "span_hint": "全文比喻",
+        }, 8
+
+    # 检测同一比喻重复出现
+    simile_cores = []
+    for s in all_similes:
+        # 提取比喻的核心词（去掉修饰）
+        core = re.sub(r"[像仿佛宛如好似如同]+", "", s)
+        core = re.sub(r"[似的一样般]+", "", core)
+        core = core.strip()[:8]  # 取前 8 字符作为核心
+        if core:
+            simile_cores.append(core)
+
+    counter = Counter(simile_cores)
+    repeated = {k: v for k, v in counter.items() if v >= 2}
+    if repeated:
+        samples = "、".join(list(repeated.keys())[:3])
+        return {
+            "rule": "比喻重复",
+            "severity": "warning",
+            "description": f"检测到重复比喻 {len(repeated)} 组（示例：{samples}）。",
+            "suggestion": "每个比喻只使用一次；重复出现的比喻替换为不同的表达方式或直接删除。",
+            "span_hint": "全文比喻",
+        }, 6
+
+    return None
+
+
 def analyze_ai_trace(text, recent_chapter_texts=None):
     text = text or ""
     issues = []
@@ -535,6 +590,13 @@ def analyze_ai_trace(text, recent_chapter_texts=None):
     ladder_res = _brisk_short_sentence_ladder_issue(paragraphs, lines=lines)
     if ladder_res:
         item, penalty = ladder_res
+        score_penalty += penalty
+        issues.append(item)
+
+    # 6.5) 比喻密度与重复
+    simile_res = _simile_density_issue(text)
+    if simile_res:
+        item, penalty = simile_res
         score_penalty += penalty
         issues.append(item)
 

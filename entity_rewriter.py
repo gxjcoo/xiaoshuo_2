@@ -725,7 +725,7 @@ _TITLE_SUFFIXES: List[str] = [
     # 武侠/江湖类
     "大侠", "女侠", "侠客", "侠士", "前辈", "老前辈",
     # 门派/师徒类
-    "长老", "老祖", "掌门", "宗主", "门主", "教主",
+    "长老", "老祖", "掌门", "宗主", "门主", "教主", "观主",
     "师兄", "师姐", "师弟", "师妹", "师父", "师尊", "恩师", "师叔", "师伯",
     # 官职/权贵类
     "大人", "老爷", "老夫人", "夫人", "公子", "少爷", "小姐", "姑娘",
@@ -839,18 +839,88 @@ def _flatten_replacements(entity_map: Union[EntityMapFlat, EntityMapRich, None])
 
 
 def apply_entity_rewrite(text: str, entity_map: Union[EntityMapFlat, EntityMapRich, None]) -> str:
-    """对文本中已知实体名做全局硬替换。按原名长度降序，避免 '赵无' 先替换吃掉 '赵无恤'。"""
+    """对文本中已知实体名做全局硬替换。按原名长度降序，避免 '赵无' 先替换吃掉 '赵无恤'。
+
+    算法：先扫描全部匹配（长名优先，跳过已被长名覆盖的位置），
+    再一次性替换，彻底杜绝三连卡壳。
+    """
     if not text or not entity_map:
         return text
     pairs = _flatten_replacements(entity_map)
     if not pairs:
         return text
-    result = text
-    for old in sorted(pairs.keys(), key=len, reverse=True):
-        new = pairs[old]
-        if old and old in result:
-            result = result.replace(old, new)
-    return result
+
+    sorted_pairs = sorted(pairs.items(), key=lambda kv: len(kv[0]), reverse=True)
+
+    # 第一步：收集所有匹配位置（长名优先，跳过已占位区域）
+    # matches: list of (start, end, replacement_text)
+    matches = []
+    occupied = set()  # 已被匹配覆盖的字符位置
+
+    for old, new in sorted_pairs:
+        if not old or old not in text:
+            continue
+        idx = 0
+        while idx <= len(text) - len(old):
+            pos = text.find(old, idx)
+            if pos == -1:
+                break
+            match_end = pos + len(old)
+            # 检查是否与已占位区域重叠
+            overlap = False
+            for p in range(pos, match_end):
+                if p in occupied:
+                    overlap = True
+                    break
+            if not overlap:
+                # 额外检查：如果替换后会产生重复子串（如 "宝塔"→"玲珑宝塔"
+                # 导致 "玲珑宝塔"→"玲珑玲珑宝塔"），则跳过
+                if _would_create_stutter(text, pos, match_end, new):
+                    idx = pos + 1
+                    continue
+                matches.append((pos, match_end, new))
+                for p in range(pos, match_end):
+                    occupied.add(p)
+            idx = pos + 1
+
+    if not matches:
+        return text
+
+    # 第二步：按位置排序，一次性替换
+    matches.sort(key=lambda m: m[0])
+    result = []
+    last_end = 0
+    for start, end, replacement in matches:
+        result.append(text[last_end:start])
+        result.append(replacement)
+        last_end = end
+    result.append(text[last_end:])
+    return "".join(result)
+
+
+def _would_create_stutter(text: str, match_start: int, match_end: int, replacement: str) -> bool:
+    """检查替换后是否会产生重复子串（三连卡壳）。
+
+    例如：text="玲珑宝塔在空中", match "宝塔" at (2,4), replacement="玲珑宝塔"
+    替换后 text[0:2] + replacement = "玲珑" + "玲珑宝塔" = "玲珑玲珑宝塔"
+    其中 "玲珑" 重复了两次 → 返回 True
+    """
+    # 获取匹配前后的上下文
+    prefix = text[:match_start]  # 匹配前的文本
+    # 替换后的结果 = prefix + replacement + text[match_end:]
+    combined = prefix + replacement
+
+    # 检查 replacement 的开头是否与 prefix 的结尾形成重复
+    # 例如: prefix="玲珑", replacement="玲珑宝塔" → "玲珑玲珑宝塔"
+    # 检查 combined 中是否有连续重复的子串
+    for check_len in range(1, min(len(replacement), len(prefix)) + 1):
+        suffix = prefix[-check_len:]  # prefix 的最后 check_len 个字符
+        rep_start = replacement[:check_len]  # replacement 的前 check_len 个字符
+        if suffix == rep_start:
+            # 检查这个重复子串是否是同一个实体名的一部分
+            # 如果 suffix 是某个实体旧名的一部分，且 rep_start 是对应新名的一部分，则跳过
+            return True
+    return False
 
 
 def detect_original_entity_leaks(

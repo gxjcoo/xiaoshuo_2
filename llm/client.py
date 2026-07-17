@@ -17,6 +17,28 @@ from config import (
     MAX_OUTPUT_TOKENS,
 )
 
+# 模块级 HTTP 客户端单例，避免每次调用创建新连接
+_http_client = None
+_openai_client = None
+
+
+def _get_openai_client():
+    """获取复用的 OpenAI 客户端单例。"""
+    global _http_client, _openai_client
+    if _http_client is None:
+        _http_client = httpx.Client(timeout=httpx.Timeout(
+            connect=API_HTTP_CONNECT_TIMEOUT,
+            read=API_HTTP_READ_TIMEOUT,
+            write=30.0,
+            pool=10.0,
+        ))
+        _openai_client = openai.OpenAI(
+            api_key=API_KEY,
+            base_url=BASE_URL,
+            http_client=_http_client,
+        )
+    return _openai_client
+
 
 def _preview_text(text, limit=600):
     if not isinstance(text, str):
@@ -91,38 +113,34 @@ def _debug_log_response(path_label, model, content, extra=""):
 
 
 def _call_openai_chat_api(messages, model, timeout, max_tokens=None, temperature=0.7, response_format=None, path_label="openai.chat.completions"):
-    with httpx.Client(timeout=timeout) as http_client:
-        if DEBUG_LLM_LOG:
-            print(f"[LLM DEBUG] processing path={path_label} endpoint={BASE_URL.rstrip('/')}/chat/completions", flush=True)
-        client = openai.OpenAI(
-            api_key=API_KEY,
-            base_url=BASE_URL,
-            http_client=http_client,
-        )
-        kwargs = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        if response_format is not None:
-            kwargs["response_format"] = response_format
-        response = client.chat.completions.create(**kwargs)
-        msg = response.choices[0].message
-        content = (msg.content or "").strip()
-        
-        # 记录推理模型的 token 使用情况（调试用）
-        if DEBUG_LLM_LOG and not content:
-            if hasattr(msg, 'reasoning_content') and msg.reasoning_content:
-                print(f"[LLM DEBUG] content 为空，reasoning_content 长度={len(msg.reasoning_content)}", flush=True)
-            if response.usage and hasattr(response.usage, 'completion_tokens_details'):
-                details = response.usage.completion_tokens_details
-                if details and hasattr(details, 'reasoning_tokens') and details.reasoning_tokens:
-                    print(f"[LLM DEBUG] reasoning_tokens={details.reasoning_tokens}, completion_tokens={response.usage.completion_tokens}", flush=True)
-        
-        _debug_log_response(path_label, model, content)
-        return content
+    if DEBUG_LLM_LOG:
+        print(f"[LLM DEBUG] processing path={path_label} endpoint={BASE_URL.rstrip('/')}/chat/completions", flush=True)
+    client = _get_openai_client()
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "timeout": timeout,
+    }
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    if response_format is not None:
+        kwargs["response_format"] = response_format
+    response = client.chat.completions.create(**kwargs)
+    msg = response.choices[0].message
+    content = (msg.content or "").strip()
+
+    # 记录推理模型的 token 使用情况（调试用）
+    if DEBUG_LLM_LOG and not content:
+        if hasattr(msg, 'reasoning_content') and msg.reasoning_content:
+            print(f"[LLM DEBUG] content 为空，reasoning_content 长度={len(msg.reasoning_content)}", flush=True)
+        if response.usage and hasattr(response.usage, 'completion_tokens_details'):
+            details = response.usage.completion_tokens_details
+            if details and hasattr(details, 'reasoning_tokens') and details.reasoning_tokens:
+                print(f"[LLM DEBUG] reasoning_tokens={details.reasoning_tokens}, completion_tokens={response.usage.completion_tokens}", flush=True)
+
+    _debug_log_response(path_label, model, content)
+    return content
 
 
 def _extract_text_from_ark_response(data):
@@ -193,7 +211,7 @@ def _call_ark_responses_api(messages, model, timeout, max_tokens=None, temperatu
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(endpoint, headers=headers, json=payload)
         if resp.status_code == 404:
-            raise FileNotFoundError("Ark /responses endpoint not available")
+            raise RuntimeError("Ark /responses endpoint not available (404)")
         resp.raise_for_status()
         data = resp.json()
         text = _extract_text_from_ark_response(data)
@@ -233,8 +251,9 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
     if max_tokens is None:
         max_tokens = MAX_OUTPUT_TOKENS
 
-    retries = 8
+    retries = 6
     delay = 8
+    max_delay = 120  # 最大重试延迟 2 分钟
     last_exception = None
 
     for attempt in range(retries):
@@ -261,7 +280,7 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
                             max_tokens=max_tokens,
                             temperature=temperature,
                         )
-                    except FileNotFoundError:
+                    except RuntimeError:
                         if DEBUG_LLM_LOG:
                             print("[LLM DEBUG] ark.responses unavailable, fallback -> chat.completions", flush=True)
                         content = _call_openai_chat_api(
@@ -310,7 +329,7 @@ def call_deepseek_api(messages, model, max_tokens=None, temperature=0.7, respons
             if attempt < retries - 1:
                 print(f"将在 {delay} 秒后重试...", flush=True)
                 time.sleep(delay)
-                delay *= 2
+                delay = min(delay * 2, max_delay)
             else:
                 print(f"已达到最大重试次数 ({retries})，请求失败。", flush=True)
 

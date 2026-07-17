@@ -69,11 +69,11 @@ def analyze_writing_style(text_sample):
 
         if not style_analysis:
             print("警告: 调用 AI 分析风格失败。返回默认风格描述。")
-            return "未能分析出风格，将使用默认风格。文本应当保持轻松幽默的基调，使用生动形象的比喻和适度的夸张手法。"
+            return "未能分析出风格，将使用默认风格。中性叙事风格，具体特征需根据原文分析。"
 
         print("风格分析完成。")
         return style_analysis
 
     except Exception as e:
         print(f"分析风格时发生错误: {e}")
-        return "未能分析出风格，将使用默认风格。文本应当保持轻松幽默的基调，使用生动形象的比喻和适度的夸张手法。"
+        return "未能分析出风格，将使用默认风格。中性叙事风格，具体特征需根据原文分析。"

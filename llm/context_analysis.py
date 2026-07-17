@@ -6,6 +6,7 @@ from config import (
     CONTEXT_ANALYSIS_MODEL,
     CONTEXT_ANALYSIS_MAX_TOKENS,
     CONTEXT_ANALYSIS_TEMPERATURE,
+    TRUNCATE_CONTEXT_ANALYSIS,
 )
 
 from .client import call_deepseek_api
@@ -38,7 +39,7 @@ def analyze_context_with_ai(current_context, chapter_content):
         f"- 宁可保留已有内容也不要用不确定信息覆盖\n"
         f"- 确保每条记录的信息都能在原文中找到对应段落\n\n"
         f"--- 当前故事背景信息 (JSON) ---\n{current_context_json}\n\n"
-        f"--- 本章节内容 ---\n{chapter_content[:6000]}\n\n"
+        f"--- 本章节内容 ---\n{chapter_content[:TRUNCATE_CONTEXT_ANALYSIS]}\n\n"
         f"--- 请严格按照上述规则，输出【完整且有效的 JSON 对象】，结构如下示例：---\n"
         f"{{\n"
         f'  "protagonist_info": {{...内容...}},\n'

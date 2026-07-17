@@ -21,9 +21,14 @@ class ChapterPlanTask(TaskNode):
 
     @property
     def deps(self) -> list:
+        # 允许运行时覆盖（用于动态添加 entity_rewrite 等可选依赖）
+        override = getattr(self, '_deps_override', None)
+        if override is not None:
+            return override
         # 如果 inject_profile 存在，则依赖它
         # 这样可以支持有拆书和无拆书两种模式
-        base_deps = ["style_analysis", "outline_extract", "entity_rewrite"]
+        # entity_rewrite 是可选依赖，在 DAG 构建时根据 enable_entity_rewrite 决定是否添加
+        base_deps = ["style_analysis", "outline_extract"]
         # inject_profile 是可选依赖，在 DAG 构建时动态添加
         return base_deps
 

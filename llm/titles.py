@@ -2,7 +2,7 @@
 
 import re
 
-from config import CHAPTER_GENERATION_MODEL
+from config import CHAPTER_GENERATION_MODEL, TRUNCATE_TITLE_SNIPPET
 
 from .client import call_deepseek_api
 
@@ -198,7 +198,7 @@ def title_from_existing_heading(chapter_number, heading_text="", chapter_content
 
 def generate_title_from_chapter_content(chapter_number, chapter_content, reference_chapter_text=""):
     """根据章节正文生成更贴合内容的副标题。"""
-    snippet = (chapter_content or "")[:2600]
+    snippet = (chapter_content or "")[:TRUNCATE_TITLE_SNIPPET]
     if not snippet.strip():
         ref_subtitle = _fallback_subtitle_from_reference(reference_chapter_text, chapter_number)
         if not ref_subtitle:
@@ -247,7 +247,7 @@ def generate_short_title(chapter_content: str, style_description: str = "", max_
     Returns:
         生成的短标题字符串
     """
-    snippet = (chapter_content or "")[:2600]
+    snippet = (chapter_content or "")[:TRUNCATE_TITLE_SNIPPET]
     if not snippet.strip():
         return "未命名"
 

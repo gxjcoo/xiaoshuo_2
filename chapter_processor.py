@@ -193,7 +193,8 @@ def _read_runtime_text(chapter_number, suffix):
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read().strip()
-    except Exception:
+    except Exception as e:
+        print(f"警告：读取 runtime 文本 {path} 失败: {e}", flush=True)
         return ""
 
 
@@ -218,7 +219,8 @@ def load_cached_outline(chapter_number):
         if isinstance(parsed, dict) and "raw_outline" in parsed:
             return str(parsed.get("raw_outline") or "").strip()
         return json.dumps(parsed, ensure_ascii=False, indent=2)
-    except Exception:
+    except Exception as e:
+        print(f"警告：读取结构骨架 runtime 缓存失败: {e}", flush=True)
         return ""
 
 
@@ -399,10 +401,10 @@ def cleanup_runtime_artifacts():
         print(f"警告：清理 runtime 工件失败: {e}")
 
 
-# 审计规则默认值。与 audit_rules.json 保持一致；修改任一处时请同步另一处。
-# 这里的阈值是「同结构改编」实际跑通的经验值，不要随意调高，否则会大量章节卡审。
+# 审计规则默认值。当 audit_rules.json 不存在或损坏时使用。
+# 阈值与 audit_rules.json 保持一致（pass_threshold=68）。
 _DEFAULT_AUDIT_RULES = {
-    "pass_threshold": 60,
+    "pass_threshold": 68,
     "deterministic_penalty_cap_total": 12,
     "deterministic_penalty_cap_ai_trace": 10,
     "ai_trace_hard_threshold": 50,
@@ -776,7 +778,7 @@ def process_chapter(
     )
     if not audit_gate_result.get("passed", False):
         score = audit_gate_result.get("last_audit", {}).get("total_score", 0)
-        threshold = audit_rules.get("pass_threshold", 85)
+        threshold = audit_rules.get("pass_threshold", 68)
         issues = audit_gate_result.get("last_audit", {}).get("issues", []) or []
         print(f"章节 {chapter_number} 审计未通过（score={score}, threshold={threshold}），本次不落盘。")
         if issues:
