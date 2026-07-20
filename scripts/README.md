@@ -8,12 +8,6 @@
 |------|------|
 | `check_all_chapters.py` | 全面检查所有100章，检测标题格式、三尺青锋错误、重复文本、修订说明等问题 |
 
-## 修复脚本
-
-| 脚本 | 用途 |
-|------|------|
-| `fix_all_issues.py` | 批量修复所有已知问题（三尺青锋、重复文本、标题格式、实体名称不一致等） |
-
 ## 测试脚本
 
 | 脚本 | 用途 |
@@ -41,9 +35,6 @@
 ```bash
 # 全面检查所有章节
 python scripts/check_all_chapters.py
-
-# 批量修复所有问题
-python scripts/fix_all_issues.py
 
 # 检查生成进度
 python scripts/check_progress.py

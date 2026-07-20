@@ -282,8 +282,8 @@ def cmd_resume(args: argparse.Namespace):
     
     # 从 tasks 模块导入所有节点类型
     from .tasks import (
-        SplitNovelTask, DecomposeBookTask, DecomposeAdvancedTask, InjectProfileTask, 
-        StyleAnalysisTask, OutlineExtractTask, EntityRewriteTask, ChapterPlanTask,
+        SplitNovelTask, DecomposeBookTask, DecomposeAdvancedTask, InjectProfileTask,
+        StyleAnalysisTask, OutlineExtractTask, ChapterPlanTask,
         ContentGenerateTask, AuditReviseTask, ContinuityCheckTask,
         ForeshadowManagerTask, StyleConsistencyTask, WriteOutputTask,
         UpdateContextTask
