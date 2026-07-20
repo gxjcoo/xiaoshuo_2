@@ -9,7 +9,7 @@
 
 1. 将整本小说 `.txt` 切成编号章节 Markdown。
 2. 读取参考章节 `N.md`，分析其文风、结构功能和事件推进方式。
-3. 调用 LLM 规划并生成结构功能对应、实体表达可改的章节。
+3. 调用 LLM 规划并生成结构功能对应的章节。
 4. 通过审计规则检测结构贴合、表达差异、连贯性、文风、AI 痕迹等问题。
 5. 在审计通过后写入输出章节，并维护长期故事上下文。
 
@@ -69,7 +69,7 @@ cp .env.example .env
 
 ## 开发与测试
 
-单元测试覆盖不调用 LLM 的确定性逻辑（实体映射、参考相似度、`ai_trace_rules` 等），无需配置 API Key 即可运行。
+单元测试覆盖不调用 LLM 的确定性逻辑（参考相似度、`ai_trace_rules` 等），无需配置 API Key 即可运行。
 
 ```bash
 pip install -r requirements-dev.txt
@@ -134,32 +134,9 @@ python split_novel.py path/to/novel.txt -o chapters_out
 python -m workflow.cli run --input_dir chapters --output_dir output_chapters --start 1 --end 10
 ```
 
-常用：`--chapter N`、`--length 3000`、`--no_strict_source_plot`（实验模式）、`--no_entity_rewrite`（关闭实体改写）、`--only <task>`（仅执行指定任务）、`--resume`（恢复中断的工作流）。
-
-### 实体改写（默认开启）
-
-`--entity_rewrite` 已升级为默认开启的「全局换名降重层」：
-
-- 自动扫描参考章里的**角色名、地名、事件名、物件/动物名**，调用 LLM 生成同风格新名。
-- 维护项目级词典 `runtime/global_entity_map.json`，**同一原名跨章永远映射到同一新名**，避免章节间「同人异名」。
-- 正式运行前会默认预扫目标章节及下一章，把跨章衔接预览里首次出现的实体也提前纳入映射；调试时可用 `--no_entity_prescan` 关闭。
-- 在所有 LLM 调用前先把参考原文、上一章衔接、下一章预览、风格备忘、骨架、意图都替换为新名；写盘前再做一次硬清洗。
-- 审计阶段检测残留时会先硬替换、再扣分，并把残留明细注入修订 prompt。
-
-关闭方式（仍想沿用原作实体名时）：
+常用：`--chapter N`、`--length 3000`、`--no_strict_source_plot`（实验模式）、`--only <task>`（仅执行指定任务）、`--resume`（恢复中断的工作流）。
 
 ```bash
-python -m workflow.cli run --no_entity_rewrite
-# 或在 .env 中设置
-ENTITY_REWRITE=0
-```
-
-如发现自动扫描漏掉某个角色，可手编 `runtime/global_entity_map.json` 的 `characters` 字段直接补条目，后续章节自动生效。
-
-**推荐工作流**：直接运行工作流，实体映射会自动生成和维护：
-
-```bash
-# 运行工作流
 python -m workflow.cli run --start 1 --end 10
 ```
 

@@ -26,14 +26,13 @@ class AuditReviseTask(TaskNode):
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         执行审计修订
-        
+
         输入：
             - chapter_number: 当前章节号
             - generated_content: 生成内容
             - reference_text: 参考文本
             - outline: 结构化骨架
-            - entity_map: 实体映射
-            
+
         输出：
             - final_content: 最终内容
             - audit_report: 审计报告
@@ -41,23 +40,21 @@ class AuditReviseTask(TaskNode):
         from audit_pipeline import audit_and_revise_until_pass
         from chapter_processor import load_audit_rules
         from config import RUNTIME_DIR, STRICT_SOURCE_PLOT
-        
+
         chapter_number = context.get("chapter_number")
         generated_content = context.get("generated_content")
         writing_style = context.get("writing_style", "")
         reference_text = context.get("reference_text", "")
         outline = context.get("outline")
-        entity_map = context.get("entity_map")
-        entity_rewrite_enabled = context.get("entity_rewrite_enabled", True)
         chapter_intent = context.get("chapter_intent", "")
         runtime_dir = context.get("runtime_dir", RUNTIME_DIR)
-        
+
         if not generated_content:
             raise ValueError("未生成内容")
-        
+
         # 加载审计规则
         rules = load_audit_rules()
-        
+
         # 获取参考文本
         chapters_dir = context.get("chapters_dir", "chapters")
         if not reference_text:
@@ -65,7 +62,7 @@ class AuditReviseTask(TaskNode):
             if os.path.exists(ref_file):
                 with open(ref_file, "r", encoding="utf-8") as f:
                     reference_text = f.read()
-        
+
         # 将 outline 转为字符串
         reference_plot_outline = ""
         if outline:
@@ -77,7 +74,7 @@ class AuditReviseTask(TaskNode):
                 reference_plot_outline = json.dumps(outline, ensure_ascii=False, indent=2)
             else:
                 reference_plot_outline = str(outline)
-        
+
         # 获取上一章结尾
         prev_chapter_end = ""
         if chapter_number > 1:
@@ -86,7 +83,7 @@ class AuditReviseTask(TaskNode):
                 with open(prev_file, "r", encoding="utf-8") as f:
                     prev_content = f.read()
                     prev_chapter_end = prev_content[-1200:] if prev_content else ""
-        
+
         # 执行审计修订
         result = audit_and_revise_until_pass(
             chapter_content=generated_content,
@@ -97,10 +94,8 @@ class AuditReviseTask(TaskNode):
             reference_plot_outline=reference_plot_outline,
             chapter_plan_text=chapter_intent,
             prev_chapter_end=prev_chapter_end,
-            entity_rewrite=entity_rewrite_enabled,
-            entity_map=entity_map if entity_rewrite_enabled else None
         )
-        
+
         # 处理返回值
         if isinstance(result, dict):
             final_content = result.get("content", generated_content)
@@ -110,12 +105,10 @@ class AuditReviseTask(TaskNode):
         else:
             final_content = result
             audit_report = {}
-        
+
         return {
             "final_content": final_content,
             "audit_report": audit_report,
-            "entity_map": entity_map,
-            "entity_rewrite_enabled": entity_rewrite_enabled,
         }
 
     def validate_inputs(self, context: Dict[str, Any]) -> bool:
@@ -125,4 +118,4 @@ class AuditReviseTask(TaskNode):
         return ["chapter_number", "generated_content"]
 
     def get_output_keys(self) -> list:
-        return ["final_content", "audit_report", "entity_map", "entity_rewrite_enabled"]
+        return ["final_content", "audit_report"]

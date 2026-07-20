@@ -21,40 +21,32 @@ class ChapterPlanTask(TaskNode):
 
     @property
     def deps(self) -> list:
-        # 允许运行时覆盖（用于动态添加 entity_rewrite 等可选依赖）
-        override = getattr(self, '_deps_override', None)
-        if override is not None:
-            return override
         # 如果 inject_profile 存在，则依赖它
         # 这样可以支持有拆书和无拆书两种模式
-        # entity_rewrite 是可选依赖，在 DAG 构建时根据 enable_entity_rewrite 决定是否添加
         base_deps = ["style_analysis", "outline_extract"]
-        # inject_profile 是可选依赖，在 DAG 构建时动态添加
         return base_deps
 
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         执行章节规划
-        
+
         输入：
             - chapter_number: 当前章节号
             - reference_text: 参考文本
             - outline: 结构化骨架
             - writing_style: 风格分析
-            - entity_map: 实体映射
-            
+
         输出：
             - chapter_intent: 章节意图文档
         """
         from ai_handler import plan_chapter_with_ai
         from config import RUNTIME_DIR, STRICT_SOURCE_PLOT
         from context_manager import load_story_context
-        
+
         chapter_number = context.get("chapter_number")
         reference_text = context.get("reference_text")
         outline = context.get("outline")
         writing_style = context.get("writing_style")
-        entity_map = context.get("entity_map")
         runtime_dir = context.get("runtime_dir", RUNTIME_DIR)
         
         # 检查缓存

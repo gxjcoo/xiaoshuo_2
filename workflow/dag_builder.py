@@ -13,7 +13,6 @@ from .tasks.decompose_advanced import DecomposeAdvancedTask
 from .tasks.inject_profile import InjectProfileTask
 from .tasks.style_analysis import StyleAnalysisTask
 from .tasks.outline_extract import OutlineExtractTask
-from .tasks.entity_rewrite import EntityRewriteTask
 from .tasks.chapter_plan import ChapterPlanTask
 from .tasks.content_generate import ContentGenerateTask
 from .tasks.audit_revise import AuditReviseTask
@@ -28,7 +27,6 @@ def build_chapter_dag(
     chapter_number: int,
     enable_decompose: bool = False,
     use_advanced_decompose: bool = False,
-    enable_entity_rewrite: bool = True,
     enable_context_update: bool = True,
     enable_continuity_check: bool = True,
     enable_foreshadow_manager: bool = True,
@@ -36,22 +34,21 @@ def build_chapter_dag(
 ) -> DAG:
     """
     构建单章处理的 DAG
-    
+
     Args:
         chapter_number: 章节号
         enable_decompose: 是否包含拆书任务
         use_advanced_decompose: 是否使用高级拆书（适用于长篇小说）
-        enable_entity_rewrite: 是否启用实体改写
         enable_context_update: 是否更新上下文
         enable_continuity_check: 是否启用连贯性检查
         enable_foreshadow_manager: 是否启用伏笔管理
         enable_style_consistency: 是否启用风格一致性验证
-        
+
     Returns:
         DAG 实例
     """
     dag = DAG()
-    
+
     # 添加所有节点
     dag.add_node(SplitNovelTask())
     dag.add_node(StyleAnalysisTask())
@@ -60,47 +57,38 @@ def build_chapter_dag(
     dag.add_node(ContentGenerateTask())
     dag.add_node(AuditReviseTask())
     dag.add_node(WriteOutputTask())
-    
+
     # 可选节点：拆书
     if enable_decompose:
         if use_advanced_decompose:
             dag.add_node(DecomposeAdvancedTask())
-            # 覆盖 inject_profile 的依赖
             inject_node = InjectProfileTask()
             inject_node.deps = ["decompose_advanced"]
             dag.add_node(inject_node)
         else:
             dag.add_node(DecomposeBookTask())
             dag.add_node(InjectProfileTask())
-        # 手动添加 inject_profile 到 chapter_plan 的依赖
         dag.add_edge("inject_profile", "chapter_plan")
     else:
-        # 即使拆书任务未在本次运行，如果 book_profile.json 已存在也要注入设定
         import os
         if os.path.exists("book_profile.json"):
             inject_node = InjectProfileTask()
             inject_node.deps = ["split_novel"]
             dag.add_node(inject_node)
             dag.add_edge("inject_profile", "chapter_plan")
-    
-    if enable_entity_rewrite:
-        dag.add_node(EntityRewriteTask())
-        # entity_rewrite 是 chapter_plan 的可选依赖
-        dag.add_edge("entity_rewrite", "chapter_plan")
 
     if enable_context_update:
         dag.add_node(UpdateContextTask())
-    
-    # 新增的可选节点
+
     if enable_continuity_check:
         dag.add_node(ContinuityCheckTask())
-    
+
     if enable_foreshadow_manager:
         dag.add_node(ForeshadowManagerTask())
-    
+
     if enable_style_consistency:
         dag.add_node(StyleConsistencyTask())
-    
+
     return dag
 
 
@@ -109,7 +97,6 @@ def build_full_dag(
     end_chapter: int,
     enable_decompose: bool = True,
     use_advanced_decompose: bool = False,
-    enable_entity_rewrite: bool = True,
     enable_context_update: bool = True,
     enable_continuity_check: bool = True,
     enable_foreshadow_manager: bool = True,
@@ -118,42 +105,37 @@ def build_full_dag(
 ) -> DAG:
     """
     构建完整工作流的 DAG（多章处理，支持分卷）
-    
+
     Args:
         start_chapter: 起始章节
         end_chapter: 结束章节
         enable_decompose: 是否包含拆书任务
         use_advanced_decompose: 是否使用高级拆书（适用于长篇小说）
-        enable_entity_rewrite: 是否启用实体改写
         enable_context_update: 是否更新上下文
         enable_continuity_check: 是否启用连贯性检查
         enable_foreshadow_manager: 是否启用伏笔管理
         enable_style_consistency: 是否启用风格一致性验证
         volume_size: 每卷章节数（用于分卷处理）
-        
+
     Returns:
         DAG 实例
     """
     dag = DAG()
-    
+
     # 添加全局节点
     dag.add_node(SplitNovelTask())
-    
+
     # 拆书和设定注入节点
     if enable_decompose:
         if use_advanced_decompose:
             dag.add_node(DecomposeAdvancedTask())
-            # 覆盖 inject_profile 的依赖
             inject_node = InjectProfileTask()
             inject_node.deps = ["decompose_advanced"]
             dag.add_node(inject_node)
         else:
             dag.add_node(DecomposeBookTask())
             dag.add_node(InjectProfileTask())
-        # inject_profile 到 chapter_plan 的依赖（通过每章节点的依赖间接生效）
-        # 注意：inject_profile → chapter_plan 的依赖在 _create_chapter_nodes 中通过 global_task_ids 处理
     else:
-        # 即使拆书任务未在本次运行，如果 book_profile.json 已存在也要注入设定
         import os
         if os.path.exists("book_profile.json"):
             inject_node = InjectProfileTask()
@@ -162,18 +144,15 @@ def build_full_dag(
 
     # 添加每章的处理节点
     for chapter_num in range(start_chapter, end_chapter + 1):
-        # 确定前一章的输出任务
         previous_chapter_output_task = None
         if chapter_num > start_chapter:
             if enable_context_update:
                 previous_chapter_output_task = f"update_context_ch{chapter_num - 1}"
             else:
                 previous_chapter_output_task = f"write_output_ch{chapter_num - 1}"
-        
-        # 为每章创建带编号的节点
+
         chapter_nodes = _create_chapter_nodes(
             chapter_num,
-            enable_entity_rewrite,
             enable_context_update,
             enable_continuity_check,
             enable_foreshadow_manager,
@@ -181,25 +160,22 @@ def build_full_dag(
             start_chapter,
             previous_chapter_output_task
         )
-        
+
         for node in chapter_nodes:
             dag.add_node(node)
-    
+
     # 如果 inject_profile 存在，确保每章的 chapter_plan 依赖它
-    # _create_chapter_nodes 中 chapter_plan 的 base_deps 不包含 inject_profile，
-    # 所以需要在这里手动添加依赖边
     if dag.get_node("inject_profile"):
         for chapter_num in range(start_chapter, end_chapter + 1):
             chapter_plan_id = f"chapter_plan_ch{chapter_num}"
             if dag.get_node(chapter_plan_id):
                 dag.add_edge("inject_profile", chapter_plan_id)
-    
+
     return dag
 
 
 def _create_chapter_nodes(
     chapter_number: int,
-    enable_entity_rewrite: bool,
     enable_context_update: bool,
     enable_continuity_check: bool = True,
     enable_foreshadow_manager: bool = True,
@@ -208,10 +184,9 @@ def _create_chapter_nodes(
     previous_chapter_output_task: Optional[str] = None
 ) -> list:
     """为单章创建所有处理节点
-    
+
     Args:
         chapter_number: 章节号
-        enable_entity_rewrite: 是否启用实体改写
         enable_context_update: 是否更新上下文
         enable_continuity_check: 是否启用连贯性检查
         enable_foreshadow_manager: 是否启用伏笔管理
@@ -219,13 +194,13 @@ def _create_chapter_nodes(
         start_chapter: 起始章节号
         previous_chapter_output_task: 前一章的输出任务 ID（用于串行执行）
     """
-    
+
     # 全局任务 ID 列表（不添加章节号）
     global_task_ids = {"split_novel", "decompose_book", "decompose_advanced", "inject_profile"}
-    
+
     # 需要严格串行执行的任务（依赖前一章的同类型任务）
-    serial_task_ids = {"entity_rewrite", "update_context"}
-    
+    serial_task_ids = {"update_context"}
+
     class ChapterTaskWrapper:
         """包装任务节点，添加章节号到 ID"""
         def __init__(self, task, chapter_num):
@@ -233,54 +208,49 @@ def _create_chapter_nodes(
             self.chapter_num = chapter_num
             self._id = f"{task.id}_ch{chapter_num}"
             self._chapter_number = chapter_num
-        
+
         @property
         def id(self):
             return self._id
-        
+
         @property
         def name(self):
             return f"{self.task.name} (第{self.chapter_num}章)"
-        
+
         @property
         def deps(self):
-            # 全局依赖保持原样，章节依赖添加章节号
             result = []
             for dep in self.task.deps:
                 if dep in global_task_ids:
                     result.append(dep)
                 else:
                     result.append(f"{dep}_ch{self.chapter_num}")
-            
-            # 对需要串行的任务，添加前章依赖
+
             if self.task.id in serial_task_ids and self.chapter_num > start_chapter:
                 result.append(f"{self.task.id}_ch{self.chapter_num - 1}")
-            
-            # 如果是第2章及以后，并且有前一章的输出任务，则添加依赖
-            if (self.chapter_num > start_chapter and 
-                previous_chapter_output_task and 
+
+            if (self.chapter_num > start_chapter and
+                previous_chapter_output_task and
                 self.task.id not in global_task_ids):
-                # 避免重复添加依赖
                 if previous_chapter_output_task not in result:
                     result.append(previous_chapter_output_task)
-            
+
             return result
-        
+
         def execute(self, context):
-            # 设置章节号到上下文
             context["chapter_number"] = self.chapter_num
             return self.task.execute(context)
-        
+
         def validate_inputs(self, context):
             context["chapter_number"] = self.chapter_num
             return self.task.validate_inputs(context)
-        
+
         def get_required_keys(self):
             return self.task.get_required_keys()
-        
+
         def get_output_keys(self):
             return self.task.get_output_keys()
-    
+
     nodes = []
 
     # 风格分析节点
@@ -289,56 +259,45 @@ def _create_chapter_nodes(
     # 骨架抽取节点
     nodes.append(ChapterTaskWrapper(OutlineExtractTask(), chapter_number))
 
-    # 实体改写节点（可选）
-    if enable_entity_rewrite:
-        nodes.append(ChapterTaskWrapper(EntityRewriteTask(), chapter_number))
+    # 意图规划节点
+    nodes.append(ChapterTaskWrapper(ChapterPlanTask(), chapter_number))
 
-    # 意图规划节点（entity_rewrite 启用时需要依赖它以获取 entity_map）
-    chapter_plan_task = ChapterPlanTask()
-    if enable_entity_rewrite:
-        # 动态添加 entity_rewrite 依赖，确保 entity_map 传递到下游
-        base_deps = list(chapter_plan_task.deps)
-        if "entity_rewrite" not in base_deps:
-            base_deps.append("entity_rewrite")
-        chapter_plan_task._deps_override = base_deps
-    nodes.append(ChapterTaskWrapper(chapter_plan_task, chapter_number))
-    
     # 正文生成节点
     nodes.append(ChapterTaskWrapper(ContentGenerateTask(), chapter_number))
-    
+
     # 审计修订节点
     nodes.append(ChapterTaskWrapper(AuditReviseTask(), chapter_number))
-    
+
     # 连贯性检查节点（可选）
     if enable_continuity_check:
         nodes.append(ChapterTaskWrapper(ContinuityCheckTask(), chapter_number))
-    
+
     # 伏笔管理节点（可选）
     if enable_foreshadow_manager:
         nodes.append(ChapterTaskWrapper(ForeshadowManagerTask(), chapter_number))
-    
+
     # 风格一致性验证节点（可选）
     if enable_style_consistency:
         nodes.append(ChapterTaskWrapper(StyleConsistencyTask(), chapter_number))
-    
+
     # 写入输出节点
     nodes.append(ChapterTaskWrapper(WriteOutputTask(), chapter_number))
-    
+
     # 更新上下文节点（可选）
     if enable_context_update:
         nodes.append(ChapterTaskWrapper(UpdateContextTask(), chapter_number))
-    
+
     return nodes
 
 
 def get_dag_description(enable_decompose: bool = True, use_advanced_decompose: bool = False) -> Dict[str, List[str]]:
     """
     获取 DAG 的人类可读描述
-    
+
     Args:
         enable_decompose: 是否启用拆书功能
         use_advanced_decompose: 是否使用高级拆书
-        
+
     Returns:
         字典，键为节点 ID，值为依赖列表
     """
@@ -346,7 +305,6 @@ def get_dag_description(enable_decompose: bool = True, use_advanced_decompose: b
         "split_novel": [],
         "style_analysis": ["split_novel"],
         "outline_extract": ["split_novel"],
-        "entity_rewrite": ["split_novel"],
         "chapter_plan": ["style_analysis", "outline_extract"],
         "content_generate": ["chapter_plan"],
         "audit_revise": ["content_generate"],
@@ -356,8 +314,7 @@ def get_dag_description(enable_decompose: bool = True, use_advanced_decompose: b
         "write_output": ["continuity_check", "foreshadow_manager", "style_consistency"],
         "update_context": ["write_output"]
     }
-    
-    # 如果启用拆书，添加相关节点和依赖
+
     if enable_decompose:
         if use_advanced_decompose:
             description["decompose_advanced"] = ["split_novel"]
@@ -366,22 +323,22 @@ def get_dag_description(enable_decompose: bool = True, use_advanced_decompose: b
             description["decompose_book"] = ["split_novel"]
             description["inject_profile"] = ["decompose_book"]
         description["chapter_plan"].append("inject_profile")
-    
+
     return description
 
 
 def print_dag_structure(enable_decompose: bool = True, use_advanced_decompose: bool = False):
     """打印 DAG 结构"""
     description = get_dag_description(enable_decompose, use_advanced_decompose)
-    
+
     print("\n工作流 DAG 结构:")
     print("-" * 50)
-    
+
     for node_id, deps in description.items():
         if deps:
             print(f"  {node_id} <- {', '.join(deps)}")
         else:
             print(f"  {node_id} (起点)")
-    
+
     print("-" * 50)
     print()

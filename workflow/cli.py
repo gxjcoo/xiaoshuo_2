@@ -21,7 +21,6 @@ from .tasks.decompose_advanced import DecomposeAdvancedTask
 from .tasks.inject_profile import InjectProfileTask
 from .tasks.style_analysis import StyleAnalysisTask
 from .tasks.outline_extract import OutlineExtractTask
-from .tasks.entity_rewrite import EntityRewriteTask
 from .tasks.chapter_plan import ChapterPlanTask
 from .tasks.content_generate import ContentGenerateTask
 from .tasks.audit_revise import AuditReviseTask
@@ -76,7 +75,6 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--output_dir", default="output_chapters", help="输出目录")
     run_parser.add_argument("--novel", help="小说文件路径（用于切章）")
     run_parser.add_argument("--no_strict_source_plot", action="store_true", help="关闭严格结构适配")
-    run_parser.add_argument("--no_entity_rewrite", action="store_true", help="关闭实体改写")
     run_parser.add_argument("--no_context_update", action="store_true", help="不更新上下文")
     run_parser.add_argument("--no_continuity_check", action="store_true", help="关闭连贯性检查")
     run_parser.add_argument("--no_foreshadow_manager", action="store_true", help="关闭伏笔管理")
@@ -151,7 +149,6 @@ def cmd_run(args: argparse.Namespace):
         end_chapter=end_chapter,
         enable_decompose=enable_decompose,
         use_advanced_decompose=use_advanced_decompose,
-        enable_entity_rewrite=not args.no_entity_rewrite,
         enable_context_update=not args.no_context_update,
         enable_continuity_check=not args.no_continuity_check,
         enable_foreshadow_manager=not args.no_foreshadow_manager,
@@ -182,7 +179,6 @@ def cmd_run(args: argparse.Namespace):
         "output_dir": args.output_dir,
         "novel_path": args.novel,
         "strict_source_plot": not args.no_strict_source_plot,
-        "entity_rewrite_enabled": not args.no_entity_rewrite,
         "target_length": args.length,
         "volume_size": args.volume_size,
         "use_advanced_decompose": use_advanced_decompose
@@ -301,7 +297,6 @@ def cmd_resume(args: argparse.Namespace):
         "inject_profile": InjectProfileTask,
         "style_analysis": StyleAnalysisTask,
         "outline_extract": OutlineExtractTask,
-        "entity_rewrite": EntityRewriteTask,
         "chapter_plan": ChapterPlanTask,
         "content_generate": ContentGenerateTask,
         "audit_revise": AuditReviseTask,
@@ -401,7 +396,6 @@ def cmd_list(args: argparse.Namespace):
         ("inject_profile", "设定注入", "将拆书结果注入到故事上下文"),
         ("style_analysis", "风格分析", "分析写作风格"),
         ("outline_extract", "骨架抽取", "提取结构化骨架"),
-        ("entity_rewrite", "实体改写", "提取和应用实体映射"),
         ("chapter_plan", "意图规划", "规划章节意图"),
         ("content_generate", "正文生成", "生成章节正文"),
         ("audit_revise", "审计修订", "审计和修订内容"),

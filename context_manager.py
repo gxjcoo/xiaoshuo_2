@@ -425,7 +425,7 @@ def update_story_context_after_chapter(
     # 在保存前简化上下文项目
     print("正在简化上下文关键项目...")
     simplify_context_items(max_items=15, max_elements=25)
-        
+
     # 更新完后立即保存
     print(f"正在保存章节 {chapter_number} 后的故事上下文...")
     save_story_context()

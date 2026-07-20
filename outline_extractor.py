@@ -32,7 +32,7 @@ def extract_structured_outline_from_reference(
 
     prompt = (
         f"请把第 {chapter_number} 章参考原文拆解成「结构化叙事骨架」，输出 JSON。\n\n"
-        "目标：后续会基于这个骨架做同结构改编，改编时会保留功能，替换实体和表达。\n\n"
+        "目标：后续会基于这个骨架做同结构改编，改编时会保留功能，替换表达。\n\n"
         "JSON 字段：\n"
         "{\n"
         '  "chapter_goal": string（本章核心目标）,\n'

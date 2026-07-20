@@ -1,11 +1,6 @@
 """章节结构骨架的结构化类型定义（真正接入主链路的部分）。
 
-历史背景：本模块原本还包含 `AuditFeedbackItem` / `AuditResult` /
-`StoryKnowledgeBase` / `CharacterState` / `Conflict` / `ItemInfo` 等类型，
-但 README 中宣称的「知识库 + 实体归一」「可操作 diff 反馈」均未真正接入主流程，
-仅在示例片段和未被调用的工具函数中出现。为消除「宣称 ≠ 实际」的不一致，
-已在收尾时移除这些类型，只保留 outline_extractor / chapter_processor 实际在用的
-SceneNode 与 ChapterOutline。
+只保留 outline_extractor / chapter_processor 实际在用的 SceneNode 与 ChapterOutline。
 """
 
 import json

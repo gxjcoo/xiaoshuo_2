@@ -144,10 +144,6 @@ TRUNCATE_REVISION_REFERENCE = 1200   # 修订用参考章片段
 # 默认开启。实验/同人自由续写可设 STRICT_SOURCE_PLOT=0 或命令行 --no_strict_source_plot。
 STRICT_SOURCE_PLOT = os.environ.get("STRICT_SOURCE_PLOT", "1").strip() in {"1", "true", "True", "YES", "yes"}
 
-# 实体改写（角色/地名/事件/物件名全局换名）：默认开启，深度降重。
-# 关闭可设 ENTITY_REWRITE=0 或命令行 --no_entity_rewrite。
-ENTITY_REWRITE = os.environ.get("ENTITY_REWRITE", "1").strip() in {"1", "true", "True", "YES", "yes"}
-
 # 章节间等待秒数：串行批量跑时在相邻两章之间暂停，避免触发 API rate limit。
 # 默认 5 秒；调试时可设为 0 加快迭代；大批量可适当调大。
 INTER_CHAPTER_SLEEP = int(os.environ.get("INTER_CHAPTER_SLEEP", "10"))

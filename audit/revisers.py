@@ -85,7 +85,7 @@ def revise_for_plot_fidelity(
         "硬要求：\n"
         "1) 补齐 missing_events，纠正 drift_issues，删除或弱化 wrong_added_facts。\n"
         "2) 不要照抄结构骨架或参考原文，要写成自然小说正文。\n"
-        "3) 保持当前正文已有的表达与实体差异，不要为了贴合结构而改回参考章句式或实体体系。\n"
+        "3) 保持当前正文已有的表达差异，不要为了贴合结构而改回参考章句式。\n"
         f"4) 保留原标题「{original_title}」，只输出标题和修订后正文。标题格式必须为 `# 标题`，标题后直接开始正文，不要在正文中重复标题。\n\n"
         f"【结构骨架】\n```json\n{reference_plot_outline}\n```\n\n"
         f"【剧情偏离报告】\n{report_json}\n\n"
@@ -93,7 +93,7 @@ def revise_for_plot_fidelity(
         f"【当前正文】\n{content_body}"
     )
     messages = [
-        {"role": "system", "content": "你是小说结构修订编辑，优先修正结构偏离，同时保持表达和实体体系与参考文拉开距离。"},
+        {"role": "system", "content": "你是小说结构修订编辑，优先修正结构偏离，同时保持表达与参考文拉开距离。"},
         {"role": "user", "content": prompt},
     ]
     revised = call_deepseek_api(

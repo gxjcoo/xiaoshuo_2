@@ -8,7 +8,6 @@
 - inject_profile: 设定注入
 - style_analysis: 风格分析
 - outline_extract: 骨架抽取
-- entity_rewrite: 实体改写
 - chapter_plan: 意图规划
 - content_generate: 正文生成
 - audit_revise: 审计修订
@@ -25,7 +24,6 @@ from .decompose_advanced import DecomposeAdvancedTask
 from .inject_profile import InjectProfileTask
 from .style_analysis import StyleAnalysisTask
 from .outline_extract import OutlineExtractTask
-from .entity_rewrite import EntityRewriteTask
 from .chapter_plan import ChapterPlanTask
 from .content_generate import ContentGenerateTask
 from .audit_revise import AuditReviseTask
@@ -42,7 +40,6 @@ __all__ = [
     "InjectProfileTask",
     "StyleAnalysisTask",
     "OutlineExtractTask",
-    "EntityRewriteTask",
     "ChapterPlanTask",
     "ContentGenerateTask",
     "AuditReviseTask",

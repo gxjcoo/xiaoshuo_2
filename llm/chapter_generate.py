@@ -8,8 +8,6 @@ from .client import call_deepseek_api
 from .prompts import (
     _brief_style_for_generation,
     _reference_prose_snippet,
-    _entity_rewrite_block,
-    _entity_rewrite_system_addon,
     _slim_context_for_generation,
     _chapter_completion_max_tokens,
 )
@@ -31,8 +29,6 @@ def generate_chapter_content(
     strict_source_plot=False,
     prev_chapter_end="",
     next_chapter_start="",
-    entity_rewrite=False,
-    entity_map=None,
     book_profile=None,
 ):
     """使用 AI 生成新的章节内容。
@@ -76,7 +72,7 @@ def generate_chapter_content(
     characters_present_block = ""
     if reference_plot_outline:
         reference_block = (
-            "【本章结构功能骨架（由参考章抽取；生成正文只能依据这些结构功能，不得复刻参考原文表达或实体体系）】\n"
+            "【本章结构功能骨架（由参考章抽取；生成正文只能依据这些结构功能，不得复刻参考原文表达）】\n"
             f"```json\n{reference_plot_outline}\n```\n\n"
         )
         # 从骨架中提取出场角色列表，作为硬约束
@@ -93,16 +89,16 @@ def generate_chapter_content(
     elif reference_chapter_text:
         fallback_ref = _reference_prose_snippet(reference_chapter_text, max_chars=900)
         reference_block = (
-            "【本章参考结构兜底片段（骨架抽取失败时使用；只取事件功能，禁止沿用句式、实体名和段落推进）】\n"
+            "【本章参考结构兜底片段（骨架抽取失败时使用；只取事件功能，禁止沿用句式和段落推进）】\n"
             f"```\n{fallback_ref}\n```\n\n"
         )
 
     if strict_source_plot:
         strict_plot_contract = (
-            "【同结构改编｜结构功能以骨架为真值，表达与实体必须拉开距离】\n"
+            "【同结构改编｜结构功能以骨架为真值，表达必须拉开距离】\n"
             "1) 主事件功能、场景功能、因果位置、人物登场/退场功能与冲突结果功能须与结构骨架一致；不是续写新书、不是扩写无关支线。\n"
             "2) 允许更换人物名、地点名、事件名、动物/物件名和局部承接方式；不得写入骨架中不存在的关键结构功能。\n"
-            "3) 禁止沿用参考原文的连续句式、段落推进、开头落点、结尾收束方式和实体体系；同一功能事件必须换一种现场展开。\n"
+            "3) 禁止沿用参考原文的连续句式、段落推进、开头落点、结尾收束方式；同一功能事件必须换一种现场展开。\n"
             "4) 若近期焦点、JSON 上下文或本章意图与结构骨架冲突，一律以结构骨架为准。\n"
             "5) 不得新增改变本章结构功能的支线或替换结局功能。\n"
             "6) 正文中只允许出现骨架中列出的角色，不得自行编造新角色或新增不在骨架中的势力。\n\n"
@@ -111,7 +107,7 @@ def generate_chapter_content(
         strict_plot_contract = (
             "【同结构改编（实验模式：上一段衔接可能来自已生成 output）】\n"
             "本章主干仍以结构骨架为真：不得仅凭 output 衔接或 JSON 上下文编造冲突的新主线、新结局功能或重要结构节点。\n"
-            "允许：语气、对白颗粒、感官扩写、镜头入口变化、实体名更换；禁止：贴着参考原文句式或实体体系洗稿。\n\n"
+            "允许：语气、对白颗粒、感官扩写、镜头入口变化；禁止：贴着参考原文句式洗稿。\n\n"
         )
 
     core_characters = current_context.get('core_characters', [])
@@ -122,80 +118,45 @@ def generate_chapter_content(
     book_profile_block = ""
     if book_profile and isinstance(book_profile, dict):
         bp_lines = ["【拆书核心设定（硬约束：正文不可与以下设定冲突）】"]
-        
-        # 如果有实体映射，将设定中的原名替换为新名
-        def _apply_entity_rewrite_to_text(text, entity_map):
-            """将文本中的原书实体名替换为新名（使用占位符防重复替换）"""
-            if not text or not entity_map or not isinstance(entity_map, dict):
-                return text
-            result = str(text)
-            # 按原名长度降序替换，避免短名误吞长名
-            all_pairs = {}
-            for cat in ["characters", "places", "events", "objects_animals"]:
-                mapping = entity_map.get(cat, {}) or {}
-                if isinstance(mapping, dict):
-                    for old, new in mapping.items():
-                        if isinstance(old, str) and isinstance(new, str) and old and new and old != new:
-                            all_pairs[old] = new
-            placeholders = {}
-            for idx, old in enumerate(sorted(all_pairs.keys(), key=len, reverse=True)):
-                if old in result:
-                    placeholder = f"\x00RW{idx}\x00"
-                    placeholders[placeholder] = all_pairs[old]
-                    result = result.replace(old, placeholder)
-            for ph, final in placeholders.items():
-                result = result.replace(ph, final)
-            return result
-        
+
         # 世界观
         ws = book_profile.get("world_setting", {})
         if isinstance(ws, dict):
             ws_desc = ws.get("description", "")
             if ws_desc:
-                ws_desc = _apply_entity_rewrite_to_text(ws_desc, entity_map)
                 bp_lines.append(f"【世界观】{str(ws_desc)[:500]}")
         elif isinstance(ws, str) and ws.strip():
-            ws = _apply_entity_rewrite_to_text(ws, entity_map)
             bp_lines.append(f"【世界观】{ws[:500]}")
-        
+
         # 主角
         proto = book_profile.get("protagonist", {})
         if isinstance(proto, dict):
             proto_name = proto.get("name", "")
             proto_desc = proto.get("description", "")
-            if proto_name:
-                proto_name = _apply_entity_rewrite_to_text(proto_name, entity_map)
-            if proto_desc:
-                proto_desc = _apply_entity_rewrite_to_text(proto_desc, entity_map)
             if proto_name or proto_desc:
                 bp_lines.append(f"【主角】{proto_name}: {str(proto_desc)[:400]}")
         elif isinstance(proto, str) and proto.strip():
-            proto = _apply_entity_rewrite_to_text(proto, entity_map)
             bp_lines.append(f"【主角】{proto[:400]}")
-        
+
         # 核心冲突
         conflict = book_profile.get("core_conflict", "")
         if conflict:
-            conflict = _apply_entity_rewrite_to_text(str(conflict), entity_map)
-            bp_lines.append(f"【核心冲突】{conflict[:400]}")
-        
+            bp_lines.append(f"【核心冲突】{str(conflict)[:400]}")
+
         # 力量体系
         power = book_profile.get("power_system", "")
         if power:
-            power = _apply_entity_rewrite_to_text(str(power), entity_map)
-            bp_lines.append(f"【力量体系】{power[:300]}")
-        
+            bp_lines.append(f"【力量体系】{str(power)[:300]}")
+
         # 金手指
         gf = book_profile.get("golden_finger", "")
         if gf:
-            gf = _apply_entity_rewrite_to_text(str(gf), entity_map)
-            bp_lines.append(f"【金手指/特殊能力】{gf[:300]}")
-        
+            bp_lines.append(f"【金手指/特殊能力】{str(gf)[:300]}")
+
         # 主要对手
         antag = book_profile.get("antagonists", "")
         if antag:
-            antag = _apply_entity_rewrite_to_text(str(antag), entity_map)
-            bp_lines.append(f"【主要对手/反派】{antag[:300]}")
+            bp_lines.append(f"【主要对手/反派】{str(antag)[:300]}")
 
         # 势力/门派（硬约束：不得自行编造势力名）
         factions = book_profile.get("factions", [])
@@ -221,8 +182,8 @@ def generate_chapter_content(
             f"- 句长错落，少排比；对话两人以上时口气要能区分。\n"
             f"- 少用段尾万能收束（总之/不禁/这一刻/他明白）；少连续内心说明书。\n"
             f"- 系统提示用打断、半句、动作混进戏里，不要连发同一腔调通知框。\n"
-            f"- 结构功能跟着骨架走，但实体名、镜头、承接、句式要换，不要贴原文段落。\n"
-            f"- 禁止连续 12 个字以上与参考原文相同；避免复用参考章的实体体系、开头句、结尾句和标志性比喻。\n\n"
+            f"- 结构功能跟着骨架走，但镜头、承接、句式要换，不要贴原文段落。\n"
+            f"- 禁止连续 12 个字以上与参考原文相同；避免复用参考章的开头句、结尾句和标志性比喻。\n\n"
         )
     else:
         production_hard_rules = (
@@ -290,7 +251,6 @@ def generate_chapter_content(
         f"{implicit_two_phase_contract}"
         f"{zhuque_anti_detection_contract}"
         f"{production_hard_rules}"
-        f"{_entity_rewrite_block(entity_rewrite, entity_map)}"
         f"【核心创作要求】：\n"
         f"1. **风格**：同结构改编也要像真人落笔；幽默从处境里长出来，不要为搞笑而堆梗。\n"
         f"2. **连贯**：人物反应符合参考中的当下压力；设定不与参考冲突。\n"
@@ -328,7 +288,7 @@ def generate_chapter_content(
             f"1. 正文从下列节选自然接入，时间线连续；不得引入参考结构中尚未出现的重大新功能节点。\n"
             f"   上一章节选：\n   ```\n   {previous_ending}\n   ```\n"
             f"2. 情绪与信息推进须落在本章结构骨架已有的功能节点上，不得写成「续写下一本书」。\n"
-            f"3. 角色反应功能与参考一致，但实体名、动作细节、对白颗粒应改编。\n"
+            f"3. 角色反应功能与参考一致，但动作细节、对白颗粒应改编。\n"
             f"4. 禁止为拉长篇幅而插入与参考结构无关的重要支线。\n"
         )
     else:
@@ -337,7 +297,7 @@ def generate_chapter_content(
             core_requirements +
             f"【同结构改编开篇】：\n"
             f"1. 仅覆盖本章 input 参考中的结构功能与场次功能，不得改主线因果位置，也不是创作全新开篇故事。\n"
-            f"{'2. 不得跳过参考中的关键功能场次，但可以更换实体名和局部承接。' if strict_source_plot else '2. 勿整段复述，可作对白、实体和感官改编。'}\n"
+            f"{'2. 不得跳过参考中的关键功能场次，但可以更换局部承接。' if strict_source_plot else '2. 勿整段复述，可作对白和感官改编。'}\n"
             f"3. 从现场与动作进入，少用说明书式内心。\n"
             f"4. 结尾若出现追喊、追杀、误会、拦路等钩子，必须与下一章开头的真实指向一致。\n"
         )
@@ -366,16 +326,15 @@ def generate_chapter_content(
     system_content = (
         "你是一位小说同结构改编作家：依据结构骨架输出同一功能链的新正文，语气有松有紧、句子有长有短，拒绝范文腔。"
         "不是自由续写、不是扩写新故事线、不是同人另起炉灶；提示中的分析/意图是备忘，禁止把提示结构映射成新章节大纲。"
-        "必须主动避开参考原文的实体体系、句式骨架、段落推进、开头和结尾表达。"
+        "必须主动避开参考原文的句式骨架、段落推进、开头和结尾表达。"
         "禁止用「心里咯噔一下/不禁/这一刻/显然」等万能情绪套话收束段落。"
         "比喻要克制，每 500 字最多 2 个；禁止同一比喻重复出现；禁止紫色散文和无叙事功能的炫技描写。"
         "优先用动作和对话推进情节，减少静态氛围铺陈。"
     )
     if strict_source_plot:
-        system_content += " 当前为严格结构适配：本章结构骨架即功能真值，可以换实体、表达和镜头承接，不可改结构功能。"
+        system_content += " 当前为严格结构适配：本章结构骨架即功能真值，可以换表达和镜头承接，不可改结构功能。"
     else:
         system_content += " 当前为同结构改编实验模式：衔接可能非原作，但本章主干仍以结构骨架为准。"
-    system_content += _entity_rewrite_system_addon(entity_rewrite, entity_map)
     messages = [
         {"role": "system", "content": system_content},
         {"role": "user", "content": prompt},

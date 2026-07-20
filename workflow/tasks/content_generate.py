@@ -26,15 +26,14 @@ class ContentGenerateTask(TaskNode):
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         执行正文生成
-        
+
         输入：
             - chapter_number: 当前章节号
             - chapter_intent: 章节意图
             - outline: 结构化骨架
             - writing_style: 风格分析
-            - entity_map: 实体映射
             - target_length: 目标字数
-            
+
         输出：
             - generated_content: 生成的正文内容
             - generated_title: 生成的标题
@@ -42,16 +41,14 @@ class ContentGenerateTask(TaskNode):
         from ai_handler import generate_chapter_content
         from config import RUNTIME_DIR, STRICT_SOURCE_PLOT
         from context_manager import load_story_context
-        
+
         chapter_number = context.get("chapter_number")
-        
+
         # 强制检查：必须先执行拆书，获取世界观、人物关系、核心设定
         self._check_book_profile_exists()
         chapter_intent = context.get("chapter_intent")
         outline = context.get("outline")
         writing_style = context.get("writing_style")
-        entity_map = context.get("entity_map")
-        entity_rewrite_enabled = context.get("entity_rewrite_enabled", True)
         target_length = context.get("target_length", 3000)
         runtime_dir = context.get("runtime_dir", RUNTIME_DIR)
         
@@ -111,8 +108,6 @@ class ContentGenerateTask(TaskNode):
             reference_chapter_text=reference_chapter_text,
             reference_plot_outline=reference_plot_outline,
             strict_source_plot=STRICT_SOURCE_PLOT,
-            entity_rewrite=entity_rewrite_enabled,
-            entity_map=entity_map,
             book_profile=book_profile,
         )
         

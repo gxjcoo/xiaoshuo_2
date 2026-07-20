@@ -1,7 +1,6 @@
 """审计-修订闭环：单章按规则循环审计，达标才返回成功。
 
 编排 `metrics` / `evaluators` / `revisers` 三个子模块，并加入：
-- 实体泄漏检测与硬替换
 - Plateau 检测（连续 3 轮变化 < 2 时回退到历史最佳版本）
 - 双向衔接校验（开头 ↔ 上一章结尾、结尾 → 下一章预览）
 - 多种针对性修订策略选择（结构偏离 / 表达过像 / AI 味 / 通用反馈）
@@ -172,8 +171,6 @@ def audit_and_revise_until_pass(
     analysis_model=CONTEXT_ANALYSIS_MODEL,
     prev_chapter_end="",
     next_chapter_start="",
-    entity_rewrite=False,
-    entity_map=None,
 ):
     """按规则循环审计修订，达标才返回成功。
     含 Plateau 检测（回退到历史最佳版本）。
@@ -200,10 +197,6 @@ def audit_and_revise_until_pass(
 
     for round_idx in range(max_rounds + 1):
         plateau_detected = False
-        # 入轮先做一次实体硬清洗，确保上一轮任何修订都没把原名引回来
-        if entity_rewrite and entity_map:
-            from entity_rewriter import apply_entity_rewrite as _apply_rewrite
-            current = _apply_rewrite(current, entity_map)
         last_audit, plot_report = _evaluate_rule_and_plot(
             current,
             chapter_number,
@@ -254,7 +247,7 @@ def audit_and_revise_until_pass(
             plateau_detected = True
             print(f"  Plateau: 连续3轮分数变化<2，当前={score} 历史最佳={best_version['score']}")
             if best_version["score"] >= pass_threshold:
-                print("  历史最佳分数已达标，但仍需通过实体/相似度/结构/双向衔接硬门槛")
+                print("  历史最佳分数已达标，但仍需通过相似度/结构/双向衔接硬门槛")
         passed = (
             bool(last_audit.get("pass", False))
             and score >= pass_threshold
@@ -281,40 +274,6 @@ def audit_and_revise_until_pass(
             )
         last_audit["reference_similarity"] = similarity_report
         last_audit["plot_fidelity"] = plot_report
-
-        # --- 实体泄漏检测：先硬替换，再扣分（修订 prompt 会拿到残留明细） ---
-        if entity_rewrite and entity_map:
-            from entity_rewriter import (
-                detect_original_entity_leaks,
-                format_entity_leak_report,
-                apply_entity_rewrite,
-            )
-            leaks_before = detect_original_entity_leaks(current, entity_map)
-            if leaks_before:
-                print(f"  实体泄漏(替换前): {len(leaks_before)} 个原名残留")
-                # 先做一次硬替换，让本轮审计在干净文本上做判断
-                current = apply_entity_rewrite(current, entity_map)
-                leaks_after = detect_original_entity_leaks(current, entity_map)
-                last_audit["entity_leaks"] = leaks_before
-                last_audit["entity_leaks_remaining"] = leaks_after
-                if leaks_after:
-                    # 硬替换之后仍残留（子串歧义等），按残留扣分并把详情塞进 issues
-                    leak_penalty = min(20, sum(l["count"] for l in leaks_after) * 3)
-                    score = max(0, score - leak_penalty)
-                    print(
-                        f"  硬替换后仍残留 {len(leaks_after)} 项，扣 {leak_penalty} 分：\n"
-                        + format_entity_leak_report(leaks_after)
-                    )
-                    issues = last_audit.get("issues", []) or []
-                    for leak in leaks_after:
-                        issues.append(
-                            f"[entity_leak] '{leak['entity']}' 残留 {leak['count']} 次，必须改为 '{leak['expected']}'"
-                        )
-                    last_audit["issues"] = issues
-                    # 标志位让修订环节强制修补
-                    last_audit["needs_entity_fix"] = True
-                else:
-                    print("  硬替换完成，已无原名残留。")
 
         # --- 双向衔接校验 ---
         hook_matched = True

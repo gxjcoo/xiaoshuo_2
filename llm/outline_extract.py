@@ -27,9 +27,9 @@ def extract_plot_outline_from_reference(reference_chapter_text, chapter_number, 
 
     ref_text = _reference_prose_snippet(reference_chapter_text, max_chars=6200)
     prompt = (
-        f"请把第 {chapter_number} 章参考原文抽取成“结构功能骨架”，输出 JSON。\n"
+        f"请把第 {chapter_number} 章参考原文抽取成「结构功能骨架」，输出 JSON。\n"
         "目标：后续作者会基于骨架做同结构改编，不会看到原文全文。\n"
-        "必须保留事件功能、冲突功能、因果位置和结尾功能，但不要复写原文句子，也不要把原文实体名视为必须保留。\n\n"
+        "必须保留事件功能、冲突功能、因果位置和结尾功能，但不要复写原文句子。\n\n"
         "JSON 字段：\n"
         "{\n"
         '  "chapter_goal": string,\n'

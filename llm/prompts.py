@@ -1,4 +1,4 @@
-"""提示词拼装辅助：风格备忘、参考片段、实体禁令、生成侧上下文瘦身。"""
+"""提示词拼装辅助：风格备忘、参考片段、生成侧上下文瘦身。"""
 
 import re
 
@@ -25,59 +25,6 @@ def _reference_prose_snippet(text, max_chars=2600):
     head = s[: max_chars - 320]
     tail = s[-280:]
     return f"{head.rstrip()}\n\n…(参考原文中部已省略)…\n\n{tail.lstrip()}"
-
-
-def _entity_rewrite_block(enabled: bool, entity_map) -> str:
-    """生成实体改写禁令块。列出**全部**映射，避免 LLM 只看到部分而沿用其他原名。"""
-    if not enabled or not entity_map or not isinstance(entity_map, dict):
-        return ""
-    label = {
-        "characters": "角色名",
-        "places": "地名",
-        "events": "事件名",
-        "objects_animals": "物件/动物名",
-    }
-    lines = ["【实体改写禁令（硬约束，违反直接判不合格；下表为本书全局统一新名）】"]
-    has_any = False
-    for cat in ("characters", "places", "events", "objects_animals"):
-        mapping = entity_map.get(cat, {}) if isinstance(entity_map, dict) else {}
-        if not mapping:
-            continue
-        has_any = True
-        items = [f"{old}→{new}" for old, new in mapping.items()]
-        lines.append(f"- {label[cat]}（共 {len(items)} 条，必须用新名）：")
-        chunk_size = 8
-        for i in range(0, len(items), chunk_size):
-            lines.append("    " + "、".join(items[i:i + chunk_size]))
-    if not has_any:
-        return ""
-    lines.append("- 上述任何【原名】不得出现在正文（含对话、内心独白、叙述、地名、招式、动物名等任何位置）。")
-    lines.append("- 与原名同字的常用词若非实体（如'宝'是普通字而非'宝寿'里的角色字）可保留；但凡作为人名/地名/物件名连用即视为违规。")
-    lines.append("- 代称（他/她/它/那人/那道士）不受此限。")
-    lines.append("- 出现任意一处原名都会触发硬替换并扣分，影响落盘。\n")
-    return "\n".join(lines) + "\n"
-
-
-def _entity_rewrite_system_addon(enabled: bool, entity_map) -> str:
-    """system 消息追加的实体硬禁令摘要，提高 LLM 的注意权重。"""
-    if not enabled or not entity_map or not isinstance(entity_map, dict):
-        return ""
-    chars = entity_map.get("characters", {}) or {}
-    places = entity_map.get("places", {}) or {}
-    char_items = list(chars.items())[:6]
-    place_items = list(places.items())[:4]
-    parts = []
-    if char_items:
-        parts.append("角色改名：" + "、".join(f"{o}→{n}" for o, n in char_items))
-    if place_items:
-        parts.append("地名改名：" + "、".join(f"{o}→{n}" for o, n in place_items))
-    if not parts:
-        return ""
-    return (
-        " 本任务启用实体全局改写：参考资料里可能仍有原名，但正文必须用新名。"
-        + "；".join(parts)
-        + "（完整映射见用户消息中的实体改写禁令块）。任何原名出现都会被判为硬错误。"
-    )
 
 
 def _slim_context_for_generation(current_context, writing_chapter_number=None):

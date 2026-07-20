@@ -2,7 +2,7 @@
 
 模块划分：
 - `client`：OpenAI 兼容 / 豆包 Ark、重试、元推理过滤
-- `prompts`：风格备忘、参考片段、实体禁令、生成侧上下文瘦身
+- `prompts`：风格备忘、参考片段、生成侧上下文瘦身
 - `titles`：章节副标题与兜底
 - `outline_extract`：从参考章抽取文本版结构骨架 JSON
 - `style_analysis`：文风分析
@@ -16,8 +16,6 @@ from .client import call_deepseek_api
 from .prompts import (
     _brief_style_for_generation,
     _reference_prose_snippet,
-    _entity_rewrite_block,
-    _entity_rewrite_system_addon,
     _slim_context_for_generation,
     _chapter_completion_max_tokens,
 )
@@ -38,8 +36,6 @@ __all__ = [
     "call_deepseek_api",
     "_brief_style_for_generation",
     "_reference_prose_snippet",
-    "_entity_rewrite_block",
-    "_entity_rewrite_system_addon",
     "_slim_context_for_generation",
     "_chapter_completion_max_tokens",
     "extract_plot_outline_from_reference",
