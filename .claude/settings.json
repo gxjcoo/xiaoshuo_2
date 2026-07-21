@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from workflow.tasks.entity_validate import EntityValidateTask, GENERIC_WORDS; print\\(f'黑名单词条数: {len\\(GENERIC_WORDS\\)}'\\); print\\('OK:', EntityValidateTask\\(\\).id\\)\")",
+      "mcp__mcp-server-askecho-search-infinity__web_search",
+      "WebSearch",
+      "Bash(python -c \"from workflow.tasks.entity_common import GENERIC_WORDS; print\\(f'黑名单: {len\\(GENERIC_WORDS\\)} 条'\\); from workflow.tasks.entity_validate import EntityValidateTask; print\\('OK:', EntityValidateTask\\(\\).id\\)\")",
+      "Bash(python -c \"from workflow.tasks.entity_common import GENERIC_WORDS; print\\(f'黑名单: {len\\(GENERIC_WORDS\\)} 条'\\); from workflow.tasks.entity_validate import EntityValidateTask; print\\('OK'\\)\")",
+      "Bash(python -c \"from workflow.tasks.entity_extract import EntityExtractTask; print\\('OK:', EntityExtractTask\\(\\).id\\)\")",
+      "Bash(python -c \"from workflow.tasks.entity_common import GENERIC_WORDS; print\\('道长' in GENERIC_WORDS, '道友' in GENERIC_WORDS\\)\")",
+      "Bash(python -c \"from workflow.tasks.entity_extract import EntityExtractTask; print\\('OK'\\)\")",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 openai>=1.0.0
 httpx>=0.24.0
+ahocorasick-rs>=1.0
 
 # 仅运行测试时需要：
 # pip install -r requirements-dev.txt
-

@@ -8,6 +8,10 @@ from typing import Dict, List, Optional
 
 from .engine import DAG
 from .tasks.split import SplitNovelTask
+from .tasks.entity_extract import EntityExtractTask
+from .tasks.entity_validate import EntityValidateTask
+from .tasks.suggest_replacements import SuggestReplacementsTask
+from .tasks.entity_replace import EntityReplaceTask
 from .tasks.decompose import DecomposeBookTask
 from .tasks.decompose_advanced import DecomposeAdvancedTask
 from .tasks.inject_profile import InjectProfileTask
@@ -51,6 +55,15 @@ def build_chapter_dag(
 
     # 添加所有节点
     dag.add_node(SplitNovelTask())
+
+    # 实体提取 + 校验 + 命名建议 + 替换
+    dag.add_node(EntityExtractTask())
+    dag.add_node(EntityValidateTask())
+    dag.add_node(SuggestReplacementsTask())
+    replace_node = EntityReplaceTask()
+    replace_node.deps = ["suggest_replacements"]  # 让 suggest 先跑
+    dag.add_node(replace_node)
+
     dag.add_node(StyleAnalysisTask())
     dag.add_node(OutlineExtractTask())
     dag.add_node(ChapterPlanTask())
@@ -73,7 +86,7 @@ def build_chapter_dag(
         import os
         if os.path.exists("book_profile.json"):
             inject_node = InjectProfileTask()
-            inject_node.deps = ["split_novel"]
+            inject_node.deps = ["entity_replace"]
             dag.add_node(inject_node)
             dag.add_edge("inject_profile", "chapter_plan")
 
@@ -125,6 +138,11 @@ def build_full_dag(
     # 添加全局节点
     dag.add_node(SplitNovelTask())
 
+    # 实体提取 + 校验 + 替换（全局任务，必须在切章之后、下游任务之前）
+    dag.add_node(EntityExtractTask())
+    dag.add_node(EntityValidateTask())
+    dag.add_node(EntityReplaceTask())
+
     # 拆书和设定注入节点
     if enable_decompose:
         if use_advanced_decompose:
@@ -139,7 +157,7 @@ def build_full_dag(
         import os
         if os.path.exists("book_profile.json"):
             inject_node = InjectProfileTask()
-            inject_node.deps = ["split_novel"]
+            inject_node.deps = ["entity_replace"]
             dag.add_node(inject_node)
 
     # 添加每章的处理节点
@@ -196,7 +214,11 @@ def _create_chapter_nodes(
     """
 
     # 全局任务 ID 列表（不添加章节号）
-    global_task_ids = {"split_novel", "decompose_book", "decompose_advanced", "inject_profile"}
+    global_task_ids = {
+        "split_novel", "entity_extract", "entity_validate",
+        "suggest_replacements", "entity_replace",
+        "decompose_book", "decompose_advanced", "inject_profile"
+    }
 
     # 需要严格串行执行的任务（依赖前一章的同类型任务）
     serial_task_ids = {"update_context"}
@@ -303,8 +325,12 @@ def get_dag_description(enable_decompose: bool = True, use_advanced_decompose: b
     """
     description = {
         "split_novel": [],
-        "style_analysis": ["split_novel"],
-        "outline_extract": ["split_novel"],
+        "entity_extract": ["split_novel"],
+        "entity_validate": ["entity_extract"],
+        "suggest_replacements": ["entity_validate"],
+        "entity_replace": ["suggest_replacements"],
+        "style_analysis": ["entity_replace"],
+        "outline_extract": ["entity_replace"],
         "chapter_plan": ["style_analysis", "outline_extract"],
         "content_generate": ["chapter_plan"],
         "audit_revise": ["content_generate"],
@@ -317,10 +343,10 @@ def get_dag_description(enable_decompose: bool = True, use_advanced_decompose: b
 
     if enable_decompose:
         if use_advanced_decompose:
-            description["decompose_advanced"] = ["split_novel"]
+            description["decompose_advanced"] = ["entity_replace"]
             description["inject_profile"] = ["decompose_advanced"]
         else:
-            description["decompose_book"] = ["split_novel"]
+            description["decompose_book"] = ["entity_replace"]
             description["inject_profile"] = ["decompose_book"]
         description["chapter_plan"].append("inject_profile")
 

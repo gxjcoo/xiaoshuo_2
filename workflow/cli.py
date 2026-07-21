@@ -16,6 +16,10 @@ from .dag_builder import (
     print_dag_structure
 )
 from .tasks.split import SplitNovelTask
+from .tasks.entity_extract import EntityExtractTask
+from .tasks.entity_validate import EntityValidateTask
+from .tasks.suggest_replacements import SuggestReplacementsTask
+from .tasks.entity_replace import EntityReplaceTask
 from .tasks.decompose import DecomposeBookTask
 from .tasks.decompose_advanced import DecomposeAdvancedTask
 from .tasks.inject_profile import InjectProfileTask
@@ -94,6 +98,20 @@ def create_parser() -> argparse.ArgumentParser:
     decompose_parser.add_argument("--advanced", action="store_true", help="使用高级拆书模式（适用于长篇小说）")
     decompose_parser.add_argument("--novel_length", type=int, default=0, help="小说总字数（用于自动选择策略）")
     
+    # extract-entities 命令
+    entities_parser = subparsers.add_parser("extract-entities", help="从原文提取实体并生成映射表")
+    entities_parser.add_argument("--novel", help="小说文件路径（可选，未提供时从 --input_dir 读取已切章文件）")
+    entities_parser.add_argument("--input_dir", default="chapters", help="章节目录（如已切章）")
+    entities_parser.add_argument("--output", default="entity_map.json", help="输出映射文件路径")
+    entities_parser.add_argument("--auto_suggest", action="store_true",
+                                  help="提取完成后自动为每个实体建议替换名（等同于跑完再执行 suggest-replacements）")
+
+    # suggest-replacements 命令
+    suggest_parser = subparsers.add_parser("suggest-replacements",
+                                            help="使用 LLM 为 entity_map.json 中所有空 replace 字段自动建议新名字")
+    suggest_parser.add_argument("--overwrite", action="store_true",
+                                 help="强制覆盖所有 replace 字段（默认只填空的）")
+
     # resume 命令
     resume_parser = subparsers.add_parser("resume", help="恢复中断的工作流")
     resume_parser.add_argument("--state_file", default="workflow_state.json", help="状态文件路径")
@@ -261,6 +279,86 @@ def cmd_decompose(args: argparse.Namespace):
         sys.exit(1)
 
 
+def cmd_extract_entities(args: argparse.Namespace):
+    """执行实体提取（切章 → LLM 提取 → LTP 校验 → 可选：命名建议）"""
+    from .engine import DAG, WorkflowEngine
+
+    dag = DAG()
+    dag.add_node(SplitNovelTask())
+    dag.add_node(EntityExtractTask())
+    dag.add_node(EntityValidateTask())
+    if args.auto_suggest:
+        dag.add_node(SuggestReplacementsTask())
+
+    engine = WorkflowEngine(dag)
+
+    engine.context = {
+        "novel_path": args.novel,
+        "chapters_dir": args.input_dir,
+    }
+
+    print("=" * 60)
+    print("实体提取流程" + ("（含 LLM 命名建议）" if args.auto_suggest else ""))
+    print("=" * 60)
+    print(f"小说文件: {args.novel}")
+    print(f"章节目录: {args.input_dir}")
+    print(f"输出文件: {args.output}")
+    print("=" * 60)
+
+    summary = engine.run(resume=False)
+
+    if summary.get("status") == "completed":
+        from config import ENTITY_MAP_FILE
+        print(f"\n实体提取完成！")
+        print(f"映射表已保存至: {ENTITY_MAP_FILE}")
+        if args.auto_suggest:
+            print(f"\nLLM 已自动填写 replace 字段，请检查并按需调整。")
+        else:
+            print(f"\n下一步选一：")
+            print(f"  A. 让 LLM 自动建议替换名: python -m workflow.cli suggest-replacements")
+            print(f"  B. 手动编辑 {ENTITY_MAP_FILE} 中的 'replace' 字段")
+        print(f"\n然后运行: python -m workflow.cli run")
+    else:
+        print(f"\n实体提取失败")
+        sys.exit(1)
+
+
+def cmd_suggest_replacements(args: argparse.Namespace):
+    """使用 LLM 为 entity_map.json 中所有实体建议替换名"""
+    from .engine import DAG, WorkflowEngine
+
+    # 先修改 deps 再 add_node，避免 DAG 校验时依赖不存在的节点
+    task = SuggestReplacementsTask()
+    task.deps = []
+    dag = DAG()
+    dag.add_node(task)
+
+    engine = WorkflowEngine(dag)
+    engine.context = {
+        "suggest_overwrite": bool(args.overwrite),
+    }
+
+    print("=" * 60)
+    print("LLM 命名建议")
+    print("=" * 60)
+    if args.overwrite:
+        print("模式: 覆盖模式（所有 replace 字段都会被 LLM 重写）")
+    else:
+        print("模式: 增量模式（只填空的 replace 字段）")
+    print("=" * 60)
+
+    summary = engine.run(resume=False)
+
+    if summary.get("status") == "completed":
+        from config import ENTITY_MAP_FILE
+        print(f"\n命名建议完成！")
+        print(f"映射表: {ENTITY_MAP_FILE}")
+        print(f"\n检查后运行: python -m workflow.cli run")
+    else:
+        print(f"\n命名建议失败")
+        sys.exit(1)
+
+
 def cmd_resume(args: argparse.Namespace):
     """恢复中断的工作流"""
     from .engine import WorkflowEngine
@@ -282,16 +380,22 @@ def cmd_resume(args: argparse.Namespace):
     
     # 从 tasks 模块导入所有节点类型
     from .tasks import (
-        SplitNovelTask, DecomposeBookTask, DecomposeAdvancedTask, InjectProfileTask,
+        SplitNovelTask, EntityExtractTask, EntityValidateTask,
+        SuggestReplacementsTask, EntityReplaceTask,
+        DecomposeBookTask, DecomposeAdvancedTask, InjectProfileTask,
         StyleAnalysisTask, OutlineExtractTask, ChapterPlanTask,
         ContentGenerateTask, AuditReviseTask, ContinuityCheckTask,
         ForeshadowManagerTask, StyleConsistencyTask, WriteOutputTask,
         UpdateContextTask
     )
-    
+
     # 重新创建节点
     task_classes = {
         "split_novel": SplitNovelTask,
+        "entity_extract": EntityExtractTask,
+        "entity_validate": EntityValidateTask,
+        "suggest_replacements": SuggestReplacementsTask,
+        "entity_replace": EntityReplaceTask,
         "decompose_book": DecomposeBookTask,
         "decompose_advanced": DecomposeAdvancedTask,
         "inject_profile": InjectProfileTask,
@@ -391,6 +495,10 @@ def cmd_list(args: argparse.Namespace):
     
     tasks = [
         ("split_novel", "切章", "将小说文本分割为章节"),
+        ("entity_extract", "实体提取", "LLM 逐章提取实体"),
+        ("entity_validate", "实体校验", "LTP 兜底补漏 + 归一化"),
+        ("suggest_replacements", "命名建议", "LLM 为每个实体建议替换名"),
+        ("entity_replace", "实体替换", "全文替换实体并重新切章"),
         ("decompose_book", "拆书", "提取世界观、人物、设定等"),
         ("decompose_advanced", "高级拆书", "适用于长篇小说（50万字以上）"),
         ("inject_profile", "设定注入", "将拆书结果注入到故事上下文"),
@@ -485,6 +593,8 @@ def main(args: Optional[List[str]] = None):
     commands = {
         "run": cmd_run,
         "decompose": cmd_decompose,
+        "extract-entities": cmd_extract_entities,
+        "suggest-replacements": cmd_suggest_replacements,
         "resume": cmd_resume,
         "status": cmd_status,
         "list": cmd_list

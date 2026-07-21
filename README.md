@@ -128,6 +128,37 @@ python -m pytest tests/ -v
 python split_novel.py path/to/novel.txt -o chapters_out
 ```
 
+## 实体提取与替换
+
+在运行主 pipeline 前，可先提取原文中的所有实体（人名/地名/法器/丹药/功法/灵兽），生成映射表，编辑替换名后自动全文替换。
+
+```bash
+# 第一步：提取实体（切章 + LLM提取 + LTP校验 → entity_map.json）
+python -m workflow.cli extract-entities --novel path/to/novel.txt
+
+# 第二步：编辑 entity_map.json，为需要替换的实体填入 "replace" 字段
+
+# 第三步：运行主 pipeline（自动读取映射表，全文替换后进入生成流程）
+python -m workflow.cli run --novel path/to/novel.txt --start 1 --end 100
+```
+
+entity_map.json 格式：
+
+```json
+{
+  "person": {
+    "玄天帝": {"aliases": [], "count": 156, "replace": "青阳道尊"}
+  },
+  "place": { ... },
+  "weapon": { ... }
+}
+```
+
+- 三层提取架构：LLM 主抽取 → 全文字符串验证去幻觉 → LTP 兜底补漏
+- 每章处理完实时写入缓存（`runtime/entity_extract_raw.json`），支持断点续跑
+- 删除 `runtime/entity_extract_raw.json` 可强制重新提取
+- 映射表中 `replace` 为空的实体不会被替换
+
 ## 同结构改编主流程
 
 ```bash

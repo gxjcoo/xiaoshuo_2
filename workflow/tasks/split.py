@@ -59,10 +59,11 @@ class SplitNovelTask(TaskNode):
         
         for dir_path in search_dirs:
             if dir_path and os.path.exists(dir_path):
-                found_chapters = sorted([
-                    f for f in os.listdir(dir_path)
-                    if f.endswith('.md') and f[0].isdigit()
-                ])
+                import re
+                found_chapters = sorted(
+                    [f for f in os.listdir(dir_path) if f.endswith('.md') and f[0].isdigit()],
+                    key=lambda x: int(re.search(r"(\d+)", x).group(1)) if re.search(r"(\d+)", x) else 0
+                )
                 if found_chapters:
                     chapters = found_chapters
                     found_dir = dir_path

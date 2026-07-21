@@ -1,0 +1,884 @@
+{
+  "person": {
+    "宝寿": {
+      "aliases": [],
+      "count": 836,
+      "replace": "福臻",
+      "word_boundary": true
+    },
+    "方玉": {
+      "aliases": [],
+      "count": 129,
+      "replace": "温良",
+      "word_boundary": true
+    },
+    "杨文离": {
+      "aliases": [],
+      "count": 85,
+      "replace": "杨辞渊",
+      "word_boundary": true
+    },
+    "陆原": {
+      "aliases": [],
+      "count": 68,
+      "replace": "陆苍野",
+      "word_boundary": true
+    },
+    "周应": {
+      "aliases": [],
+      "count": 62,
+      "replace": "周承",
+      "word_boundary": true
+    },
+    "玉恒": {
+      "aliases": [],
+      "count": 61,
+      "replace": "清虚",
+      "word_boundary": true
+    },
+    "杜兴": {
+      "aliases": [],
+      "count": 60,
+      "replace": "杜盛",
+      "word_boundary": true
+    },
+    "袁啸舟": {
+      "aliases": [],
+      "count": 55,
+      "replace": "袁长老",
+      "word_boundary": true
+    },
+    "郑元": {
+      "aliases": [],
+      "count": 53,
+      "replace": "郑伯",
+      "word_boundary": true
+    },
+    "赵奇": {
+      "aliases": [],
+      "count": 42,
+      "replace": "赵异",
+      "word_boundary": true
+    },
+    "周烈": {
+      "aliases": [],
+      "count": 37,
+      "replace": "周炽",
+      "word_boundary": true
+    },
+    "陈三水": {
+      "aliases": [],
+      "count": 27,
+      "replace": "陈淼",
+      "word_boundary": true
+    },
+    "孟山君": {
+      "aliases": [],
+      "count": 26,
+      "replace": "虎啸君",
+      "word_boundary": true
+    },
+    "赤玄": {
+      "aliases": [],
+      "count": 25,
+      "replace": "丹灵",
+      "word_boundary": true
+    },
+    "罗七": {
+      "aliases": [],
+      "count": 22,
+      "replace": "罗拾",
+      "word_boundary": true
+    },
+    "赵寻": {
+      "aliases": [],
+      "count": 21,
+      "replace": "赵觅",
+      "word_boundary": true
+    },
+    "秋风": {
+      "aliases": [],
+      "count": 19,
+      "replace": "飒叶",
+      "word_boundary": true
+    },
+    "林燕": {
+      "aliases": [],
+      "count": 17,
+      "replace": "林翎",
+      "word_boundary": true
+    },
+    "耿继": {
+      "aliases": [],
+      "count": 15,
+      "replace": "耿绍",
+      "word_boundary": true
+    },
+    "周迎": {
+      "aliases": [],
+      "count": 11,
+      "replace": "周迓",
+      "word_boundary": true
+    },
+    "柳明": {
+      "aliases": [],
+      "count": 11,
+      "replace": "柳澈",
+      "word_boundary": true
+    },
+    "孔秀": {
+      "aliases": [],
+      "count": 11,
+      "replace": "孔颖",
+      "word_boundary": true
+    },
+    "冯乘": {
+      "aliases": [],
+      "count": 6,
+      "replace": "冯御",
+      "word_boundary": true
+    },
+    "潘承": {
+      "aliases": [],
+      "count": 5,
+      "replace": "潘嗣",
+      "word_boundary": true
+    },
+    "钟章": {
+      "aliases": [],
+      "count": 4,
+      "replace": "钟斐",
+      "word_boundary": true
+    },
+    "墨归": {
+      "aliases": [],
+      "count": 3,
+      "replace": "玄返",
+      "word_boundary": true
+    },
+    "赵忠": {
+      "aliases": [],
+      "count": 2,
+      "replace": "赵挚",
+      "word_boundary": true
+    },
+    "陈友语": {
+      "aliases": [],
+      "count": 2,
+      "replace": "陈伯言",
+      "word_boundary": true
+    },
+    "赤尊": {
+      "aliases": [],
+      "count": 2,
+      "replace": "炎皇",
+      "word_boundary": true
+    },
+    "李二": {
+      "aliases": [],
+      "count": 1,
+      "replace": "李仲",
+      "word_boundary": true
+    },
+    "宝寿道长": {
+      "aliases": [],
+      "count": 0,
+      "replace": "青阳道长",
+      "word_boundary": true
+    },
+    "小熊": {
+      "aliases": [],
+      "count": 0,
+      "replace": "玄熊",
+      "word_boundary": true
+    },
+    "年轻道士": {
+      "aliases": [],
+      "count": 0,
+      "replace": "青衣道人",
+      "word_boundary": true
+    },
+    "小熊仔": {
+      "aliases": [],
+      "count": 0,
+      "replace": "玄熊幼崽",
+      "word_boundary": true
+    },
+    "炼神真人": {
+      "aliases": [],
+      "count": 0,
+      "replace": "凝神真人",
+      "word_boundary": true
+    },
+    "焦鹤": {
+      "aliases": [],
+      "count": 0,
+      "replace": "云鹤",
+      "word_boundary": true
+    },
+    "焦鹤观主": {
+      "aliases": [],
+      "count": 0,
+      "replace": "云鹤观主",
+      "word_boundary": true
+    },
+    "顾玄宗": {
+      "aliases": [],
+      "count": 0,
+      "replace": "玄清宗",
+      "word_boundary": true
+    },
+    "徐影": {
+      "aliases": [],
+      "count": 0,
+      "replace": "徐剑",
+      "word_boundary": true
+    },
+    "刘清": {
+      "aliases": [],
+      "count": 0,
+      "replace": "刘雪",
+      "word_boundary": true
+    },
+    "阎罗殿第三殿主": {
+      "aliases": [],
+      "count": 0,
+      "replace": "幽冥殿第三殿主",
+      "word_boundary": true
+    },
+    "掌教老爷": {
+      "aliases": [],
+      "count": 0,
+      "replace": "观主老爷",
+      "word_boundary": true
+    },
+    "宝寿道人": {
+      "aliases": [],
+      "count": 0,
+      "replace": "青阳道人",
+      "word_boundary": true
+    },
+    "陈图": {
+      "aliases": [],
+      "count": 0,
+      "replace": "陈山",
+      "word_boundary": true
+    },
+    "陈画": {
+      "aliases": [],
+      "count": 0,
+      "replace": "陈月",
+      "word_boundary": true
+    },
+    "左域紫衣主事": {
+      "aliases": [],
+      "count": 0,
+      "replace": "左域紫衣执事",
+      "word_boundary": true
+    },
+    "顾玄宗大长老周鹤寿": {
+      "aliases": [],
+      "count": 0,
+      "replace": "玄清宗大长老周鹤寿",
+      "word_boundary": true
+    },
+    "周大长老": {
+      "aliases": [],
+      "count": 0,
+      "replace": "周长老",
+      "word_boundary": true
+    },
+    "焦鹤宗主": {
+      "aliases": [],
+      "count": 0,
+      "replace": "云鹤宗主",
+      "word_boundary": true
+    },
+    "焦观主": {
+      "aliases": [],
+      "count": 0,
+      "replace": "云观主",
+      "word_boundary": true
+    },
+    "上元仙宗太上长老": {
+      "aliases": [],
+      "count": 0,
+      "replace": "玄元仙宗太上长老",
+      "word_boundary": true
+    },
+    "玉龙仙宗太上长老": {
+      "aliases": [],
+      "count": 0,
+      "replace": "苍龙仙宗太上长老",
+      "word_boundary": true
+    }
+  },
+  "place": {
+    "猎妖府": {
+      "aliases": [
+        "广山域猎妖府",
+        "京城猎妖府",
+        "大夏猎妖府"
+      ],
+      "count": 247,
+      "replace": "镇妖司",
+      "word_boundary": true
+    },
+    "大夏": {
+      "aliases": [],
+      "count": 196,
+      "replace": "苍胥",
+      "word_boundary": true
+    },
+    "白羊县": {
+      "aliases": [],
+      "count": 186,
+      "replace": "皓鹿县",
+      "word_boundary": true
+    },
+    "广山域": {
+      "aliases": [],
+      "count": 166,
+      "replace": "青岚域",
+      "word_boundary": true
+    },
+    "丰源山": {
+      "aliases": [],
+      "count": 117,
+      "replace": "云屏山",
+      "word_boundary": true
+    },
+    "星罗宗": {
+      "aliases": [
+        "星罗山"
+      ],
+      "count": 97,
+      "replace": "天罗宗",
+      "word_boundary": true
+    },
+    "王山": {
+      "aliases": [],
+      "count": 76,
+      "replace": "君岳",
+      "word_boundary": true
+    },
+    "南泉县": {
+      "aliases": [],
+      "count": 72,
+      "replace": "朔渊县",
+      "word_boundary": true
+    },
+    "永尧河": {
+      "aliases": [],
+      "count": 70,
+      "replace": "长祈河",
+      "word_boundary": true
+    },
+    "陆原县": {
+      "aliases": [],
+      "count": 68,
+      "replace": "川莽县",
+      "word_boundary": true
+    },
+    "原天域": {
+      "aliases": [],
+      "count": 61,
+      "replace": "原天境",
+      "word_boundary": true
+    },
+    "九霄仙宗": {
+      "aliases": [
+        "九霄宗"
+      ],
+      "count": 51,
+      "replace": "青云宗",
+      "word_boundary": true
+    },
+    "金阳县": {
+      "aliases": [],
+      "count": 38,
+      "replace": "炽晖县",
+      "word_boundary": true
+    },
+    "白虹观": {
+      "aliases": [
+        "白虹道观"
+      ],
+      "count": 32,
+      "replace": "青云观",
+      "word_boundary": true
+    },
+    "吞阴山": {
+      "aliases": [],
+      "count": 24,
+      "replace": "幽冥山",
+      "word_boundary": true
+    },
+    "渊河": {
+      "aliases": [],
+      "count": 22,
+      "replace": "溟川",
+      "word_boundary": true
+    },
+    "青冥州": {
+      "aliases": [],
+      "count": 19,
+      "replace": "青川州",
+      "word_boundary": true
+    },
+    "阎罗殿": {
+      "aliases": [],
+      "count": 16,
+      "replace": "幽冥殿",
+      "word_boundary": true
+    },
+    "宣源县": {
+      "aliases": [],
+      "count": 15,
+      "replace": "彰灵县",
+      "word_boundary": true
+    },
+    "豹尾乡": {
+      "aliases": [],
+      "count": 14,
+      "replace": "彪翎乡",
+      "word_boundary": true
+    },
+    "青岩阁": {
+      "aliases": [],
+      "count": 12,
+      "replace": "苍石阁",
+      "word_boundary": true
+    },
+    "京城": {
+      "aliases": [],
+      "count": 8,
+      "replace": "帝都",
+      "word_boundary": true
+    },
+    "玉龙仙宗": {
+      "aliases": [],
+      "count": 6,
+      "replace": "苍龙仙宗",
+      "word_boundary": true
+    },
+    "风极乡": {
+      "aliases": [],
+      "count": 4,
+      "replace": "岚尽乡",
+      "word_boundary": true
+    },
+    "焚江煮河": {
+      "aliases": [],
+      "count": 4,
+      "replace": "烬川炙流",
+      "word_boundary": true
+    },
+    "大周": {
+      "aliases": [],
+      "count": 3,
+      "replace": "皇商",
+      "word_boundary": true
+    },
+    "云落山": {
+      "aliases": [
+        "云落阁"
+      ],
+      "count": 2,
+      "replace": "雾隐山",
+      "word_boundary": true
+    },
+    "真玄山脉": {
+      "aliases": [],
+      "count": 2,
+      "replace": "灵虚山脉",
+      "word_boundary": true
+    },
+    "丰县": {
+      "aliases": [],
+      "count": 2,
+      "replace": "饶县",
+      "word_boundary": true
+    },
+    "白猿县": {
+      "aliases": [],
+      "count": 1,
+      "replace": "苍狖县",
+      "word_boundary": true
+    },
+    "幽冥宗": {
+      "aliases": [],
+      "count": 1,
+      "replace": "九幽宗",
+      "word_boundary": true
+    },
+    "中玄州": {
+      "aliases": [],
+      "count": 1,
+      "replace": "钧天州",
+      "word_boundary": true
+    },
+    "青冥州猎妖府": {
+      "aliases": [],
+      "count": 0,
+      "replace": "青川州镇妖司",
+      "word_boundary": true
+    },
+    "大夏境": {
+      "aliases": [],
+      "count": 0,
+      "replace": "大周境",
+      "word_boundary": true
+    },
+    "丰源山白虹观": {
+      "aliases": [],
+      "count": 0,
+      "replace": "云屏山青云观",
+      "word_boundary": true
+    },
+    "星罗分观": {
+      "aliases": [],
+      "count": 0,
+      "replace": "天罗分观",
+      "word_boundary": true
+    },
+    "上元仙宗": {
+      "aliases": [],
+      "count": 0,
+      "replace": "玄元仙宗",
+      "word_boundary": true
+    },
+    "白羽州": {
+      "aliases": [],
+      "count": 0,
+      "replace": "青羽州",
+      "word_boundary": true
+    }
+  },
+  "weapon": {
+    "天魂珠": {
+      "aliases": [
+        "十二天魂珠"
+      ],
+      "count": 126,
+      "replace": "苍冥魂珠",
+      "word_boundary": true
+    },
+    "混沌珠": {
+      "aliases": [],
+      "count": 54,
+      "replace": "鸿蒙源珠",
+      "word_boundary": true
+    },
+    "猎杀榜": {
+      "aliases": [
+        "猎杀册"
+      ],
+      "count": 49,
+      "replace": "诛生玄榜",
+      "word_boundary": true
+    },
+    "玄元龙鼎珠": {
+      "aliases": [],
+      "count": 47,
+      "replace": "太始龙渊珠",
+      "word_boundary": true
+    },
+    "猎妖榜": {
+      "aliases": [
+        "猎妖册"
+      ],
+      "count": 33,
+      "replace": "戮邪血榜",
+      "word_boundary": true
+    },
+    "九煞鬼柱": {
+      "aliases": [],
+      "count": 32,
+      "replace": "万冥幽柱",
+      "word_boundary": true
+    },
+    "离字令": {
+      "aliases": [
+        "九宫离字令"
+      ],
+      "count": 19,
+      "replace": "焚天令",
+      "word_boundary": true
+    },
+    "天机盘": {
+      "aliases": [],
+      "count": 14,
+      "replace": "衍天星盘",
+      "word_boundary": true
+    },
+    "钵盂": {
+      "aliases": [],
+      "count": 13,
+      "replace": "渡厄金钵",
+      "word_boundary": true
+    },
+    "九宫令": {
+      "aliases": [],
+      "count": 9,
+      "replace": "八荒玄令",
+      "word_boundary": true
+    },
+    "斩妖刀": {
+      "aliases": [],
+      "count": 7,
+      "replace": "青锋刀",
+      "word_boundary": true
+    },
+    "百魂幡": {
+      "aliases": [
+        "万魂血幡"
+      ],
+      "count": 5,
+      "replace": "聚魄幽幡",
+      "word_boundary": true
+    },
+    "惊雷剑": {
+      "aliases": [],
+      "count": 5,
+      "replace": "奔星剑",
+      "word_boundary": true
+    },
+    "清灵符": {
+      "aliases": [],
+      "count": 5,
+      "replace": "净尘灵符",
+      "word_boundary": true
+    },
+    "神行符": {
+      "aliases": [],
+      "count": 4,
+      "replace": "御风神符",
+      "word_boundary": true
+    },
+    "白虹仙剑": {
+      "aliases": [
+        "白虹剑"
+      ],
+      "count": 3,
+      "replace": "青虹仙剑",
+      "word_boundary": true
+    },
+    "乾字令": {
+      "aliases": [],
+      "count": 3,
+      "replace": "太极令",
+      "word_boundary": true
+    },
+    "乾坤袋": {
+      "aliases": [],
+      "count": 3,
+      "replace": "须弥宝袋",
+      "word_boundary": true
+    },
+    "剔骨刀": {
+      "aliases": [],
+      "count": 3,
+      "replace": "碎脉刀",
+      "word_boundary": true
+    },
+    "阎罗大狱印": {
+      "aliases": [],
+      "count": 3,
+      "replace": "幽冥镇狱印",
+      "word_boundary": true
+    },
+    "赤金绳索": {
+      "aliases": [],
+      "count": 2,
+      "replace": "缚龙金索",
+      "word_boundary": true
+    },
+    "誓言符": {
+      "aliases": [],
+      "count": 2,
+      "replace": "心魔血符",
+      "word_boundary": true
+    },
+    "破风刀": {
+      "aliases": [],
+      "count": 1,
+      "replace": "裂空长刀",
+      "word_boundary": true
+    },
+    "佛珠": {
+      "aliases": [],
+      "count": 1,
+      "replace": "菩提念珠",
+      "word_boundary": true
+    },
+    "仙剑": {
+      "aliases": [],
+      "count": 0,
+      "replace": "青锋仙剑",
+      "word_boundary": true
+    },
+    "紫金宝塔": {
+      "aliases": [],
+      "count": 0,
+      "replace": "紫金玲珑塔",
+      "word_boundary": true
+    },
+    "宝塔": {
+      "aliases": [],
+      "count": 0,
+      "replace": "玲珑宝塔",
+      "word_boundary": true
+    },
+    "青灵魔云罩": {
+      "aliases": [],
+      "count": 0,
+      "replace": "玄灵魔云罩",
+      "word_boundary": true
+    }
+  },
+  "medicine": {
+    "药散": {
+      "aliases": [],
+      "count": 18,
+      "replace": "枯荣散",
+      "word_boundary": true
+    },
+    "天极道丹": {
+      "aliases": [],
+      "count": 8,
+      "replace": "混元无极丹",
+      "word_boundary": true
+    },
+    "纯阳丹": {
+      "aliases": [],
+      "count": 4,
+      "replace": "九阳真火丹",
+      "word_boundary": true
+    },
+    "疗伤丹药": {
+      "aliases": [],
+      "count": 1,
+      "replace": "续命青华丹",
+      "word_boundary": true
+    }
+  },
+  "skill": {
+    "冥河咒术": {
+      "aliases": [],
+      "count": 19,
+      "replace": "幽渊镇魂咒",
+      "word_boundary": true
+    },
+    "剑气断流": {
+      "aliases": [],
+      "count": 6,
+      "replace": "锋芒截浪诀",
+      "word_boundary": true
+    },
+    "一剑斩天": {
+      "aliases": [],
+      "count": 4,
+      "replace": "孤锋裂穹术",
+      "word_boundary": true
+    },
+    "拘神秘术": {
+      "aliases": [],
+      "count": 2,
+      "replace": "锁灵拿仙术",
+      "word_boundary": true
+    },
+    "九煞鬼柱阵法": {
+      "aliases": [],
+      "count": 2,
+      "replace": "",
+      "word_boundary": true
+    },
+    "十二绝魂阵": {
+      "aliases": [],
+      "count": 1,
+      "replace": "",
+      "word_boundary": true
+    },
+    "屠龙术": {
+      "aliases": [],
+      "count": 1,
+      "replace": "诛鳞秘术",
+      "word_boundary": true
+    },
+    "大小如意": {
+      "aliases": [],
+      "count": 1,
+      "replace": "千变万化法",
+      "word_boundary": true
+    },
+    "入水神通": {
+      "aliases": [],
+      "count": 1,
+      "replace": "潜渊避水诀",
+      "word_boundary": true
+    },
+    "九宫八卦": {
+      "aliases": [],
+      "count": 1,
+      "replace": "太虚奇门阵",
+      "word_boundary": true
+    },
+    "冥河秘术": {
+      "aliases": [],
+      "count": 1,
+      "replace": "黄泉渡引法",
+      "word_boundary": true
+    },
+    "天机推衍": {
+      "aliases": [],
+      "count": 1,
+      "replace": "星轨演命术",
+      "word_boundary": true
+    },
+    "血肉重生": {
+      "aliases": [],
+      "count": 1,
+      "replace": "滴血化生诀",
+      "word_boundary": true
+    },
+    "青冥州灾祸": {
+      "aliases": [],
+      "count": 0,
+      "replace": "青川州劫难",
+      "word_boundary": true
+    }
+  },
+  "beast": {
+    "玄龟": {
+      "aliases": [],
+      "count": 58,
+      "replace": "墨渊霸龟",
+      "word_boundary": true
+    },
+    "赤玄蛟龙": {
+      "aliases": [],
+      "count": 25,
+      "replace": "绛血角蛟",
+      "word_boundary": true
+    },
+    "小熊崽": {
+      "aliases": [],
+      "count": 2,
+      "replace": "罴宝",
+      "word_boundary": true
+    },
+    "妖将玄龟": {
+      "aliases": [],
+      "count": 1,
+      "replace": "镇岳灵龟",
+      "word_boundary": true
+    },
+    "赤焰蛇": {
+      "aliases": [],
+      "count": 1,
+      "replace": "焚煌火蛇",
+      "word_boundary": true
+    }
+  }
+}

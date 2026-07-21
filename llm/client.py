@@ -14,6 +14,7 @@ from config import (
     DEBUG_LLM_LOG,
     DEBUG_LLM_PREVIEW_CHARS,
     DOUBAO_USE_RESPONSES_API,
+    DOUBAO_DISABLE_THINKING,
     MAX_OUTPUT_TOKENS,
 )
 
@@ -126,6 +127,9 @@ def _call_openai_chat_api(messages, model, timeout, max_tokens=None, temperature
         kwargs["max_tokens"] = max_tokens
     if response_format is not None:
         kwargs["response_format"] = response_format
+    # 豆包 doubao-seed 系列模型默认可能开启思考模式，通过 extra_body 关闭
+    if LLM_PROVIDER == "doubao" and DOUBAO_DISABLE_THINKING:
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     response = client.chat.completions.create(**kwargs)
     msg = response.choices[0].message
     content = (msg.content or "").strip()
@@ -199,6 +203,9 @@ def _call_ark_responses_api(messages, model, timeout, max_tokens=None, temperatu
     }
     if max_tokens is not None:
         payload["max_output_tokens"] = int(max_tokens)
+    # 豆包 doubao-seed 系列模型默认可能开启思考模式，通过 thinking 参数关闭
+    if DOUBAO_DISABLE_THINKING:
+        payload["thinking"] = {"type": "disabled"}
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",

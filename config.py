@@ -193,6 +193,11 @@ DEBUG_LLM_PREVIEW_CHARS = int(os.environ.get("DEBUG_LLM_PREVIEW_CHARS", "600"))
 # 1 = 优先走 Ark /responses（可能返回 reasoning 文本，适合特定场景）
 DOUBAO_USE_RESPONSES_API = os.environ.get("DOUBAO_USE_RESPONSES_API", "0").strip() in {"1", "true", "True", "YES", "yes"}
 
+# 豆包 doubao-seed 系列模型默认可能开启思考模式（thinking），影响响应速度。
+# 1 = 强制关闭思考模式（快，推荐用于本项目的实体提取/文本生成场景）
+# 0 = 使用模型默认策略（可能开启思考，慢）
+DOUBAO_DISABLE_THINKING = os.environ.get("DOUBAO_DISABLE_THINKING", "1").strip() in {"1", "true", "True", "YES", "yes"}
+
 
 # --- 工作流配置 ---
 # 工作流状态文件路径
@@ -223,6 +228,13 @@ DECOMPOSE_ADVANCED_QUICK_SCAN = int(os.environ.get("DECOMPOSE_ADVANCED_QUICK_SCA
 DECOMPOSE_ADVANCED_DEEP_PER_DIM = int(os.environ.get("DECOMPOSE_ADVANCED_DEEP_PER_DIM", "5"))
 # 高级拆书模式下，伏笔分析使用的最大字符数（需要全书视野）
 DECOMPOSE_ADVANCED_FORESHADOW_MAX_CHARS = int(os.environ.get("DECOMPOSE_ADVANCED_FORESHADOW_MAX_CHARS", "30000"))
+
+# --- 实体提取配置 ---
+ENTITY_EXTRACTION_MODEL = os.environ.get("ENTITY_EXTRACTION_MODEL", DEFAULT_LLM_MODEL)
+# 归一化阶段需要一次性输出全部实体（可能 200+ 条），token 上限要放宽
+ENTITY_EXTRACTION_MAX_TOKENS = int(os.environ.get("ENTITY_EXTRACTION_MAX_TOKENS", "16384"))
+ENTITY_EXTRACTION_TEMPERATURE = float(os.environ.get("ENTITY_EXTRACTION_TEMPERATURE", "0.1"))
+ENTITY_MAP_FILE = os.environ.get("ENTITY_MAP_FILE", "entity_map.json")
 
 # 工作流自动跳过已完成任务
 WORKFLOW_AUTO_SKIP = os.environ.get("WORKFLOW_AUTO_SKIP", "1").strip() in {"1", "true", "True", "YES", "yes"}
